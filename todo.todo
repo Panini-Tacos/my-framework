@@ -1,0 +1,77 @@
+-[ok]fichier
+    -[ok]copier tout les repertoires necessaires
+    -[ok]configurer deploy.sh
+-[wip]dans main
+    -[ok]base
+        -[ok]table mouvement(id,num-compte,daty,typany,montant)
+        -[ok]table cheque(id,numcheque,num-compte,date-validiter,foreignkey num compte)
+        -[ok]table cheque-status(id,statut)
+        -[ok]table cheque etat(id,id cheque(FK),idstatut(Fk),daty)
+        -[ok]inserer donnees
+    -[ok]connection mysql
+        -[ok]connection.java
+            -[ok]cop coll
+    -[ok]creer package objet
+            -[ok]creer toutes les classes
+    -[ok]creer package dao
+            -[ok]creer un dao pour chaque objet si necessaire
+    -[ok]creer package service
+            -[ok]creer un service pour chaque banque
+    -[ok]creer package exception
+    -[wip]fonctions
+        -[wip]FindCheque
+            -[wip]chequeDAO
+                -[wip]FindCheque
+            -[]chequeSercive
+                -[]FindCheque appellant FindCheque dans ChequeDAO
+                -[]si vide relever exception
+            -[]exception
+                -[]creer chequenotfound exception
+                    -[]envoyer un exception chequenot found!
+            -[]tester dans main
+        -[]VerifierDateValiditer
+            -[]chequeDAO
+                -[ok]FindCheque
+            -[]chequeService
+                -[]VerifierDateCheque appelant FindCheque dans ChequeDAO
+                -[]recuperer la date dans FindCheque
+                -[]comparer datevaliditer avec date now
+                -[]si datevaliditer> date now, lever exception
+            -[]Exception
+                -[]creer DateNomValideException
+                    -[]message Date Non Valide!
+            -[]tester dans main
+        -[]VerifierStatut
+            -[]ChequeDAO
+                -[]GetStatutCheque
+            -[]chequeService
+                -[]VerifierStatut appelant GetStatutcheque
+                -[]verifier:
+                    si cheque voler ou deja encaisser, lever exception
+                -[]exceptions
+                    -[]creer chequeVolerException
+                        -[]message ce cheque a ete vole
+                    -[]creer ChequeDejaEncaisserException
+                        -[]message ce cheque a deja etet encaisser
+            -[]tester dans main
+        -[]VerifierSolde
+            -[]MouvementDAO
+                -[]GetSolde : Operation directement dans msql
+            -[]MouvementService
+                -[]appel de GetSolde
+                -[]comparer Solde avec le montant
+                -[]si montant > solde , lever exception SoldeInsuffisantException
+            -[]exception
+                -[]SoldeInsuffisantException
+                    -[]Message solde insuffisant!
+            -[]tester dans main
+        -[]EncaisserCheque
+            -[]MouvementDAO
+                -[]CheaueDAO
+                    -[ok]FindCheque
+                -[]EncaisserCheque
+                    -[]inserer dans mouvement: num_compe du cheque,date d'encaissement,type credit,montant
+            -[]MouvementService
+                -[]appel de FindCheque,VerifierDateValiditer, VerifierStatut, VerifierSolde, EncaisserCheque
+                -[]transaction: si l'un des foction n'est pas valider , RollBack
+        -[]tester dans main

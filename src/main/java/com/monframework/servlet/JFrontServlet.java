@@ -1,18 +1,20 @@
 package com.monframework.servlet;
 
-import annotations.JController;
 import jakarta.servlet.ServletConfig;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import utils.JComponentScanner;
+import utils.JRoutrRegistry;
+import utils.JRoutrRegistry.RouteInfo;
 
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.util.List;
 
-public class JFrontServlet extends HttpServlet{
+public class JFrontServlet extends HttpServlet {
 
+    private JRoutrRegistry registry;
     private String controllersPackage;
 
     @Override
@@ -22,38 +24,11 @@ public class JFrontServlet extends HttpServlet{
         if (controllersPackage == null || controllersPackage.isEmpty()) {
             controllersPackage = "main.java.controllers";
         }
-    }
-    
-    protected void processRequest(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
-        String uri = request.getRequestURI();
-        String contextPath = request.getContextPath();
-        String path = uri.substring(contextPath.length());
-
-        if (path.equals("/api")) {
-            handleApi(response);
-        } else {
-            response.setContentType("text/plain;charset=UTF-8");
-            response.getWriter().println("URL interceptee : " + path);
-        }
-    }
-
-    private void handleApi(HttpServletResponse response) throws IOException {
-        response.setContentType("text/plain;charset=UTF-8");
+        registry = new JRoutrRegistry();
         try {
-            JComponentScanner scanner = new JComponentScanner();
-            List<Class<?>> allClasses = scanner.scanPackage(controllersPackage);
-            List<Class<?>> controllers = scanner.filterControllers(allClasses);
-
-            response.getWriter().println("=== Liste des Controllers ===");
-            if (controllers.isEmpty()) {
-                response.getWriter().println("Aucun controller trouve dans le package : " + controllersPackage);
-            } else {
-                for (Class<?> c : controllers) {
-                    response.getWriter().println(" - " + c.getSimpleName());
-                }
-            }
+            registry.scanPackage(controllersPackage);
         } catch (Exception e) {
-            response.getWriter().println("Erreur lors du scan : " + e.getMessage());
+            throw new ServletException("Erreur lors du scan des routes", e);
         }
     }
 
@@ -67,5 +42,45 @@ public class JFrontServlet extends HttpServlet{
     protected void doPost(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
         processRequest(request, response);
+    }
+
+    protected void processRequest(HttpServletRequest request, HttpServletResponse response)
+            throws ServletException, IOException {
+        String uri = request.getRequestURI();
+        String contextPath = request.getContextPath();
+        String path = uri.substring(contextPath.length());
+
+        response.setContentType("text/plain;charset=UTF-8");
+        PrintWriter out = response.getWriter();
+
+        RouteInfo exact = registry.findExact(path);
+        if (exact != null) {
+            out.println("Route trouvee (exact) :");
+            out.println("  URL : " + exact.getUrl());
+            out.println("  Controller : " + exact.getControllerClass().getName());
+            out.println("  Methode : " + exact.getMethod().getName());
+            return;
+        }
+
+        List<RouteInfo> partials = registry.findStartsWith(path);
+        if (!partials.isEmpty()) {
+            out.println("Plusieurs routes correspondent a '" + path + "' :");
+            for (RouteInfo r : partials) {
+                out.println("  " + r.getUrl() + " -> " + r.getControllerClass().getSimpleName() + "." + r.getMethod().getName() + "()");
+            }
+            return;
+        }
+
+        out.println("Aucune route trouvee pour : " + path);
+        out.println();
+        out.println("=== Routes disponibles ===");
+        List<RouteInfo> allRoutes = registry.getAllRoutes();
+        if (allRoutes.isEmpty()) {
+            out.println("Aucune route enregistree.");
+        } else {
+            for (RouteInfo r : allRoutes) {
+                out.println("  " + r.getUrl() + " -> " + r.getControllerClass().getSimpleName() + "." + r.getMethod().getName() + "()");
+            }
+        }
     }
 }

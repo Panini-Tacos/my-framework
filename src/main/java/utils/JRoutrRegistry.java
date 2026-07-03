@@ -4,27 +4,32 @@ import annotations.JController;
 import annotations.JRoutrMapping;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 public class JRoutrRegistry {
 
     public static class RouteInfo {
         private String url;
+        private HttpMethod httpMethod;
         private Class<?> controllerClass;
         private Method method;
 
-        public RouteInfo(String url, Class<?> controllerClass, Method method) {
+        public RouteInfo(String url, HttpMethod httpMethod, Class<?> controllerClass, Method method) {
             this.url = url;
+            this.httpMethod = httpMethod;
             this.controllerClass = controllerClass;
             this.method = method;
         }
 
         public String getUrl() { return url; }
+        public HttpMethod getHttpMethod() { return httpMethod; }
         public Class<?> getControllerClass() { return controllerClass; }
         public Method getMethod() { return method; }
     }
 
-    private List<RouteInfo> routes = new ArrayList<>();
+    private Map<RouteKey, RouteInfo> routes = new LinkedHashMap<>();
 
     public void scanPackage(String packageName) throws Exception {
         JComponentScanner scanner = new JComponentScanner();
@@ -35,32 +40,38 @@ public class JRoutrRegistry {
             for (Method method : controller.getDeclaredMethods()) {
                 if (method.isAnnotationPresent(JRoutrMapping.class)) {
                     JRoutrMapping mapping = method.getAnnotation(JRoutrMapping.class);
-                    routes.add(new RouteInfo(mapping.value(), controller, method));
+                    RouteKey key = new RouteKey(mapping.url(), mapping.method());
+
+                    if (routes.containsKey(key)) {
+                        RouteInfo existing = routes.get(key);
+                        throw new Exception(
+                            "Conflit de route : [" + mapping.method() + "] " + mapping.url()
+                            + " deja associe a " + existing.getControllerClass().getName() + "." + existing.getMethod().getName()
+                            + " ne peut pas etre reassigne a " + controller.getName() + "." + method.getName()
+                        );
+                    }
+
+                    routes.put(key, new RouteInfo(mapping.url(), mapping.method(), controller, method));
                 }
             }
         }
     }
 
-    public RouteInfo findExact(String url) {
-        for (RouteInfo route : routes) {
-            if (route.getUrl().equals(url)) {
-                return route;
-            }
-        }
-        return null;
+    public RouteInfo findExact(String url, HttpMethod method) {
+        return routes.get(new RouteKey(url, method));
     }
 
     public List<RouteInfo> findStartsWith(String prefix) {
         List<RouteInfo> result = new ArrayList<>();
-        for (RouteInfo route : routes) {
-            if (route.getUrl().startsWith(prefix)) {
-                result.add(route);
+        for (Map.Entry<RouteKey, RouteInfo> entry : routes.entrySet()) {
+            if (entry.getKey().getUrl().startsWith(prefix)) {
+                result.add(entry.getValue());
             }
         }
         return result;
     }
 
     public List<RouteInfo> getAllRoutes() {
-        return routes;
+        return new ArrayList<>(routes.values());
     }
 }

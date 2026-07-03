@@ -5,6 +5,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import utils.HttpMethod;
 import utils.JRoutrRegistry;
 import utils.JRoutrRegistry.RouteInfo;
 
@@ -49,14 +50,15 @@ public class JFrontServlet extends HttpServlet {
         String uri = request.getRequestURI();
         String contextPath = request.getContextPath();
         String path = uri.substring(contextPath.length());
+        HttpMethod httpMethod = HttpMethod.valueOf(request.getMethod().toUpperCase());
 
         response.setContentType("text/plain;charset=UTF-8");
         PrintWriter out = response.getWriter();
 
-        RouteInfo exact = registry.findExact(path);
+        RouteInfo exact = registry.findExact(path, httpMethod);
         if (exact != null) {
             out.println("Route trouvee (exact) :");
-            out.println("  URL : " + exact.getUrl());
+            out.println("  [" + exact.getHttpMethod() + "] " + exact.getUrl());
             out.println("  Controller : " + exact.getControllerClass().getName());
             out.println("  Methode : " + exact.getMethod().getName());
             return;
@@ -66,7 +68,7 @@ public class JFrontServlet extends HttpServlet {
         if (!partials.isEmpty()) {
             out.println("Plusieurs routes correspondent a '" + path + "' :");
             for (RouteInfo r : partials) {
-                out.println("  " + r.getUrl() + " -> " + r.getControllerClass().getSimpleName() + "." + r.getMethod().getName() + "()");
+                out.println("  [" + r.getHttpMethod() + "] " + r.getUrl() + " -> " + r.getControllerClass().getSimpleName() + "." + r.getMethod().getName() + "()");
             }
             return;
         }
@@ -79,7 +81,7 @@ public class JFrontServlet extends HttpServlet {
             out.println("Aucune route enregistree.");
         } else {
             for (RouteInfo r : allRoutes) {
-                out.println("  " + r.getUrl() + " -> " + r.getControllerClass().getSimpleName() + "." + r.getMethod().getName() + "()");
+                out.println("  [" + r.getHttpMethod() + "] " + r.getUrl() + " -> " + r.getControllerClass().getSimpleName() + "." + r.getMethod().getName() + "()");
             }
         }
     }

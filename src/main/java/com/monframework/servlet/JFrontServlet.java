@@ -11,6 +11,7 @@ import utils.JRoutrRegistry.RouteInfo;
 
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.lang.reflect.Method;
 import java.util.List;
 
 public class JFrontServlet extends HttpServlet {
@@ -57,10 +58,23 @@ public class JFrontServlet extends HttpServlet {
 
         RouteInfo exact = registry.findExact(path, httpMethod);
         if (exact != null) {
-            out.println("Route trouvee (exact) :");
-            out.println("  [" + exact.getHttpMethod() + "] " + exact.getUrl());
-            out.println("  Controller : " + exact.getControllerClass().getName());
-            out.println("  Methode : " + exact.getMethod().getName());
+            try {
+                Object controllerInstance = exact.getControllerClass().getDeclaredConstructor().newInstance();
+                Method method = exact.getMethod();
+                method.setAccessible(true);
+                Class<?>[] paramTypes = method.getParameterTypes();
+                Object[] args = new Object[paramTypes.length];
+                for (int i = 0; i < paramTypes.length; i++) {
+                    if (paramTypes[i] == HttpServletRequest.class) {
+                        args[i] = request;
+                    } else if (paramTypes[i] == HttpServletResponse.class) {
+                        args[i] = response;
+                    }
+                }
+                method.invoke(controllerInstance, args);
+            } catch (Exception e) {
+                out.println("Erreur lors de l'execution de " + exact.getControllerClass().getSimpleName() + "." + exact.getMethod().getName() + " : " + e.getCause() != null ? e.getCause().getMessage() : e.getMessage());
+            }
             return;
         }
 

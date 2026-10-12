@@ -5,7 +5,7 @@ rm -rf out
 mkdir -p out
 
 # Compilation
-javac -Xlint -cp "lib/*" -d out $(find . -name "*.java")
+javac -parameters -Xlint -cp "lib/*" -d out $(find . -name "*.java")
 
 # Vérification
 if [ $? -ne 0 ]; then

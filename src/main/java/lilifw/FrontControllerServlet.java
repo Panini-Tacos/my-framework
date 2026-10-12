@@ -83,9 +83,15 @@ public class FrontControllerServlet extends HttpServlet {
                 Class<?> controllerClass = Class.forName(foncApideURL.getController());
                 Object controllerInstance = controllerClass.getDeclaredConstructor().newInstance();
 
-                // Injection des parametres : ApplicationContext, HttpServletRequest
-                // et binding des champs de formulaire vers les parametres simples.
-                Object[] parameters = lilifw.utils.DataBinder.bind(foncApideURL.getMethode(), request, ctx);
+                Class<?>[] parameterTypes = foncApideURL.getMethode().getParameterTypes();
+                Object[] parameters = new Object[parameterTypes.length];
+                for (int i = 0; i < parameterTypes.length; i++) {
+                    if (parameterTypes[i].equals(ApplicationContext.class)) {
+                        parameters[i] = ctx;
+                    } else {
+                        parameters[i] = null;
+                    }
+                }
 
                 // invoker la methode API 
                 Object result = foncApideURL.getMethode().invoke(controllerInstance, parameters);
@@ -130,10 +136,15 @@ public class FrontControllerServlet extends HttpServlet {
             Class<?> controllerClass = Class.forName(foncDeURL.getControllerName());
             Object controllerInstance = controllerClass.getDeclaredConstructor().newInstance();
 
-            // Injection des parametres : ApplicationContext, HttpServletRequest
-            // et binding des champs de formulaire vers les parametres simples.
-            // Si un parametre attend un objet, DataBinder leve une BindingException.
-            Object[] parameters = lilifw.utils.DataBinder.bind(foncDeURL.getMethode(), request, ctx);
+            Class<?>[] parameterTypes = foncDeURL.getMethode().getParameterTypes();
+            Object[] parameters = new Object[parameterTypes.length];
+            for (int i = 0; i < parameterTypes.length; i++) {
+                if (parameterTypes[i].equals(ApplicationContext.class)) {
+                    parameters[i] = ctx;
+                } else {
+                    parameters[i] = null;
+                }
+            }
 
             Object result = foncDeURL.getMethode().invoke(controllerInstance, parameters);
 

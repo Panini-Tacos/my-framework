@@ -83,15 +83,9 @@ public class FrontControllerServlet extends HttpServlet {
                 Class<?> controllerClass = Class.forName(foncApideURL.getController());
                 Object controllerInstance = controllerClass.getDeclaredConstructor().newInstance();
 
-                Class<?>[] parameterTypes = foncApideURL.getMethode().getParameterTypes();
-                Object[] parameters = new Object[parameterTypes.length];
-                for (int i = 0; i < parameterTypes.length; i++) {
-                    if (parameterTypes[i].equals(ApplicationContext.class)) {
-                        parameters[i] = ctx;
-                    } else {
-                        parameters[i] = null;
-                    }
-                }
+                // Injection des parametres : ApplicationContext, HttpServletRequest
+                // et binding des champs de formulaire (donnees simples ou objets).
+                Object[] parameters = lilifw.utils.DataBinder.bind(foncApideURL.getMethode(), request, ctx);
 
                 // invoker la methode API 
                 Object result = foncApideURL.getMethode().invoke(controllerInstance, parameters);
@@ -136,15 +130,10 @@ public class FrontControllerServlet extends HttpServlet {
             Class<?> controllerClass = Class.forName(foncDeURL.getControllerName());
             Object controllerInstance = controllerClass.getDeclaredConstructor().newInstance();
 
-            Class<?>[] parameterTypes = foncDeURL.getMethode().getParameterTypes();
-            Object[] parameters = new Object[parameterTypes.length];
-            for (int i = 0; i < parameterTypes.length; i++) {
-                if (parameterTypes[i].equals(ApplicationContext.class)) {
-                    parameters[i] = ctx;
-                } else {
-                    parameters[i] = null;
-                }
-            }
+            // Injection des parametres : ApplicationContext, HttpServletRequest
+            // et binding des champs de formulaire. Les objets (POJO) sont
+            // instancies et remplis a partir des champs du formulaire.
+            Object[] parameters = lilifw.utils.DataBinder.bind(foncDeURL.getMethode(), request, ctx);
 
             Object result = foncDeURL.getMethode().invoke(controllerInstance, parameters);
 

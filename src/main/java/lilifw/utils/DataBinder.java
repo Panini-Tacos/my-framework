@@ -1,9 +1,17 @@
 package lilifw.utils;
 
+import java.lang.reflect.Array;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.util.ArrayList;
+import java.util.List;
 
 import org.springframework.context.ApplicationContext;
 
@@ -18,16 +26,19 @@ import lilifw.annotation.RequestParam;
  * <ul>
  *   <li>un {@code ApplicationContext} ou un {@code HttpServletRequest} est
  *       injecte automatiquement par le framework ;</li>
- *   <li>sinon la valeur du champ de formulaire portant le meme nom est
- *       convertie vers le type du parametre. Le nom du champ est donne par
- *       {@code @RequestParam("nom")} ou, a defaut, par le nom du parametre Java
- *       (compilation avec {@code -parameters}).</li>
+ *   <li>un parametre simple (primitif, wrapper, String, enum, BigDecimal/
+ *       BigInteger) recoit la valeur du champ de meme nom ;</li>
+ *   <li>un parametre objet (POJO) est instancie puis rempli avec les champs du
+ *       formulaire. Les champs peuvent etre "plats" ({@code nom}) ou prefixes
+ *       ({@code user.nom}) ; les objets imbriques utilisent la notation pointee
+ *       ({@code adresse.ville}) et les listes/tableaux plusieurs valeurs.</li>
  * </ul>
  *
- * <p>Seules les donnees "simples" sont supportees : primitifs, wrappers,
- * String, enums, BigDecimal/BigInteger. Si un parametre attend un objet (POJO),
- * ou si la valeur recue ressemble a un objet/tableau JSON, une
- * {@link BindingException} est levee.</p>
+ * <p>Le nom d'un champ vient de {@code @RequestParam("nom")} ou, a defaut, du
+ * nom du parametre Java (compilation avec {@code -parameters}).</p>
+ *
+ * <p>Une {@link BindingException} n'est levee que pour un vrai echec :
+ * conversion impossible, champ obligatoire absent, objet non instanciable...</p>
  */
 public class DataBinder {
 
@@ -42,8 +53,8 @@ public class DataBinder {
      * @param request requete HTTP contenant les champs du formulaire
      * @param ctx     contexte Spring eventuellement injecte (peut etre null)
      * @return les arguments, dans l'ordre des parametres de la methode
-     * @throws BindingException si une donnee est un objet, si la conversion
-     *                          echoue ou si un champ obligatoire est absent
+     * @throws BindingException si une conversion echoue, si un champ obligatoire
+     *                          est absent ou si un objet ne peut pas etre cree
      */
     public static Object[] bind(Method method, HttpServletRequest request, ApplicationContext ctx)
             throws BindingException {
@@ -65,94 +76,139 @@ public class DataBinder {
                 continue;
             }
 
-            // Si le parametre attend un objet, on ne peut pas le remplir depuis un
-            // formulaire : on leve une exception.
-            if (!isSimpleType(type)) {
-                throw new BindingException("Le parametre '" + displayName(parameter) + "' de la methode "
-                        + method.getName() + " attend un objet (" + type.getName()
-                        + ") : seules les donnees simples sont supportees par le binding.");
+            if (isSimpleType(type)) {
+                arguments[i] = bindSimple(parameter, type, request);
+            } else if (type.isArray() || isListType(type)) {
+                arguments[i] = bindCollection(parameter, type, request);
+            } else {
+                // Objet (POJO) : on l'instancie et on le remplit.
+                arguments[i] = bindObject(parameter, type, request);
             }
-
-            String name = resolveName(parameter);
-            String value = request.getParameter(name);
-
-            if (value == null) {
-                // Un primitif ne peut jamais valoir null : il est obligatoire.
-                if (type.isPrimitive() || isRequired(parameter)) {
-                    throw new BindingException("Le champ obligatoire '" + name + "' est absent de la requete (methode "
-                            + method.getName() + "). Nommez-le avec @RequestParam(\"nom\") ou compilez les controleurs avec -parameters.");
-                }
-                arguments[i] = null;
-                continue;
-            }
-
-            // Une valeur qui ressemble a un objet/tableau JSON n'est pas une donnee
-            // simple : on leve une exception (sauf si le type attendu est du texte).
-            if (!isTextType(type) && looksLikeObject(value)) {
-                throw new BindingException("Le champ '" + name
-                        + "' contient une valeur objet : seules les donnees simples sont supportees par le binding.");
-            }
-
-            arguments[i] = convert(value, type, name);
         }
 
         return arguments;
     }
 
-    /** Types "simples" pouvant etre remplis depuis un formulaire. */
-    private static boolean isSimpleType(Class<?> type) {
-        return type.isPrimitive()
-                || type.isEnum()
-                || type.equals(String.class)
-                || CharSequence.class.isAssignableFrom(type)
-                || Number.class.isAssignableFrom(type)
-                || type.equals(Boolean.class)
-                || type.equals(Character.class);
+    // ------------------------------------------------------------------
+    // Parametre simple
+    // ------------------------------------------------------------------
+
+    private static Object bindSimple(Parameter parameter, Class<?> type, HttpServletRequest request)
+            throws BindingException {
+        String name = resolveName(parameter);
+        String value = request.getParameter(name);
+
+        if (value == null) {
+            // Un primitif ne peut jamais valoir null : il est obligatoire.
+            if (type.isPrimitive() || isRequired(parameter)) {
+                throw new BindingException("Le champ obligatoire '" + name + "' est absent de la requete.");
+            }
+            return null;
+        }
+
+        return convert(value, type, name);
     }
 
-    /** Types texte : une valeur JSON y est acceptee telle quelle. */
-    private static boolean isTextType(Class<?> type) {
-        return type.equals(String.class) || CharSequence.class.isAssignableFrom(type);
+    // ------------------------------------------------------------------
+    // Parametre liste / tableau
+    // ------------------------------------------------------------------
+
+    private static Object bindCollection(Parameter parameter, Class<?> type, HttpServletRequest request)
+            throws BindingException {
+        String name = resolveName(parameter);
+        String[] values = request.getParameterValues(name);
+
+        if (values == null) {
+            if (isRequired(parameter)) {
+                throw new BindingException("Le champ obligatoire '" + name + "' est absent de la requete.");
+            }
+            return null;
+        }
+
+        if (type.isArray()) {
+            return convertArray(values, type.getComponentType(), name);
+        }
+        return convertList(values, listElementType(parameter.getParameterizedType()), name);
     }
 
-    /** Nom du champ de formulaire associe au parametre. */
-    private static String resolveName(Parameter parameter) throws BindingException {
+    // ------------------------------------------------------------------
+    // Parametre objet (POJO)
+    // ------------------------------------------------------------------
+
+    private static Object bindObject(Parameter parameter, Class<?> type, HttpServletRequest request)
+            throws BindingException {
+        boolean annotated = parameter.getAnnotation(RequestParam.class) != null;
+        String prefix = objectPrefix(parameter, request);
+
+        // @RequestParam(required = false) et aucun champ correspondant -> null.
+        if (annotated && !isRequired(parameter) && !hasParametersWithPrefix(request, prefix)) {
+            return null;
+        }
+
+        Object instance = instantiate(type);
+        populate(instance, prefix, request);
+        return instance;
+    }
+
+    /** Remplit recursivement un objet a partir des champs du formulaire. */
+    private static void populate(Object target, String prefix, HttpServletRequest request) throws BindingException {
+        for (Field field : allFields(target.getClass())) {
+            int modifiers = field.getModifiers();
+            if (Modifier.isStatic(modifiers) || Modifier.isTransient(modifiers)) {
+                continue;
+            }
+
+            String name = field.getName();
+            String fullName = prefix.isEmpty() ? name : prefix + "." + name;
+            Class<?> fieldType = field.getType();
+
+            if (isSimpleType(fieldType)) {
+                String value = request.getParameter(fullName);
+                if (value != null) {
+                    writeProperty(target, field, convert(value, fieldType, fullName));
+                }
+            } else if (fieldType.isArray()) {
+                String[] values = request.getParameterValues(fullName);
+                if (values != null) {
+                    writeProperty(target, field, convertArray(values, fieldType.getComponentType(), fullName));
+                }
+            } else if (isListType(fieldType)) {
+                String[] values = request.getParameterValues(fullName);
+                if (values != null) {
+                    writeProperty(target, field, convertList(values, listElementType(field.getGenericType()), fullName));
+                }
+            } else {
+                // Objet imbrique : on ne le remplit que si des champs le concernent
+                // (adresse.ville, adresse.codePostal, ...).
+                if (!hasParametersWithPrefix(request, fullName)) {
+                    continue;
+                }
+                Object nested = readProperty(target, field);
+                if (nested == null) {
+                    nested = instantiate(fieldType);
+                    writeProperty(target, field, nested);
+                }
+                populate(nested, fullName, request);
+            }
+        }
+    }
+
+    /** Prefixe des champs d'un objet : @RequestParam("x") -> "x", sinon
+     *  auto-detection du nom du parametre, sinon binding "plat". */
+    private static String objectPrefix(Parameter parameter, HttpServletRequest request) throws BindingException {
         RequestParam annotation = parameter.getAnnotation(RequestParam.class);
         if (annotation != null && !annotation.value().isEmpty()) {
             return annotation.value();
         }
-        if (parameter.isNamePresent()) {
+        if (parameter.isNamePresent() && hasParametersWithPrefix(request, parameter.getName())) {
             return parameter.getName();
         }
-        throw new BindingException("Impossible de determiner le nom du champ pour un parametre de type "
-                + parameter.getType().getSimpleName()
-                + " : nommez-le avec @RequestParam(\"nom\") ou compilez les controleurs avec -parameters.");
+        return "";
     }
 
-    /** false uniquement si @RequestParam(required = false). */
-    private static boolean isRequired(Parameter parameter) {
-        RequestParam annotation = parameter.getAnnotation(RequestParam.class);
-        return annotation != null && annotation.required();
-    }
-
-    private static String displayName(Parameter parameter) {
-        RequestParam annotation = parameter.getAnnotation(RequestParam.class);
-        if (annotation != null && !annotation.value().isEmpty()) {
-            return annotation.value();
-        }
-        return parameter.isNamePresent() ? parameter.getName() : parameter.getType().getSimpleName();
-    }
-
-    /** Detecte une valeur qui a la forme d'un objet ({...}) ou tableau ([...]) JSON. */
-    private static boolean looksLikeObject(String value) {
-        String trimmed = value.trim();
-        if (trimmed.isEmpty()) {
-            return false;
-        }
-        char first = trimmed.charAt(0);
-        char last = trimmed.charAt(trimmed.length() - 1);
-        return (first == '{' && last == '}') || (first == '[' && last == ']');
-    }
+    // ------------------------------------------------------------------
+    // Conversions
+    // ------------------------------------------------------------------
 
     private static Object convert(String value, Class<?> type, String name) throws BindingException {
         try {
@@ -201,8 +257,25 @@ public class DataBinder {
             throw new BindingException("Impossible de convertir la valeur '" + value + "' du champ '" + name
                     + "' vers le type " + type.getSimpleName() + ".", e);
         }
-        // Ne devrait pas arriver : le type est filtre par isSimpleType().
+        // Ne devrait pas arriver : le type est filtre en amont.
         throw new BindingException("Type non supporte pour le champ '" + name + "' : " + type.getName());
+    }
+
+    private static Object convertArray(String[] values, Class<?> componentType, String name) throws BindingException {
+        Object array = Array.newInstance(componentType, values.length);
+        for (int i = 0; i < values.length; i++) {
+            Array.set(array, i, convert(values[i], componentType, name));
+        }
+        return array;
+    }
+
+    private static List<Object> convertList(String[] values, Class<?> elementType, String name)
+            throws BindingException {
+        List<Object> list = new ArrayList<>();
+        for (String value : values) {
+            list.add(convert(value, elementType, name));
+        }
+        return list;
     }
 
     @SuppressWarnings({ "unchecked", "rawtypes" })
@@ -214,5 +287,168 @@ public class DataBinder {
     private static boolean parseBoolean(String value) {
         String v = value.trim().toLowerCase();
         return v.equals("true") || v.equals("on") || v.equals("yes") || v.equals("1");
+    }
+
+    // ------------------------------------------------------------------
+    // Instanciation / lecture / ecriture
+    // ------------------------------------------------------------------
+
+    private static Object instantiate(Class<?> type) throws BindingException {
+        try {
+            Constructor<?> constructor = type.getDeclaredConstructor();
+            constructor.setAccessible(true);
+            return constructor.newInstance();
+        } catch (NoSuchMethodException e) {
+            throw new BindingException("La classe " + type.getName()
+                    + " ne possede pas de constructeur sans argument : impossible de la binder.", e);
+        } catch (Exception e) {
+            throw new BindingException("Impossible d'instancier " + type.getName() + " pour le binding.", e);
+        }
+    }
+
+    private static void writeProperty(Object target, Field field, Object value) throws BindingException {
+        try {
+            Method setter = findSetter(target.getClass(), field.getName(), value);
+            if (setter != null) {
+                setter.setAccessible(true);
+                setter.invoke(target, value);
+                return;
+            }
+            field.setAccessible(true);
+            field.set(target, value);
+        } catch (Exception e) {
+            throw new BindingException("Impossible d'ecrire la propriete '" + field.getName() + "' de "
+                    + target.getClass().getName() + ".", e);
+        }
+    }
+
+    private static Object readProperty(Object target, Field field) {
+        try {
+            String base = field.getName();
+            String suffix = Character.toUpperCase(base.charAt(0)) + base.substring(1);
+            for (Method method : target.getClass().getMethods()) {
+                if (method.getParameterCount() == 0
+                        && (method.getName().equals("get" + suffix) || method.getName().equals("is" + suffix))) {
+                    method.setAccessible(true);
+                    return method.invoke(target);
+                }
+            }
+            field.setAccessible(true);
+            return field.get(target);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static Method findSetter(Class<?> type, String property, Object value) {
+        String suffix = Character.toUpperCase(property.charAt(0)) + property.substring(1);
+        String setterName = "set" + suffix;
+        for (Method method : type.getMethods()) {
+            if (!method.getName().equals(setterName) || method.getParameterCount() != 1) {
+                continue;
+            }
+            Class<?> parameterType = method.getParameterTypes()[0];
+            if (value == null || parameterType.isAssignableFrom(value.getClass())
+                    || (parameterType.isPrimitive() && isWrapper(parameterType, value.getClass()))) {
+                return method;
+            }
+        }
+        return null;
+    }
+
+    private static List<Field> allFields(Class<?> type) {
+        List<Field> fields = new ArrayList<>();
+        Class<?> current = type;
+        while (current != null && current != Object.class) {
+            for (Field field : current.getDeclaredFields()) {
+                fields.add(field);
+            }
+            current = current.getSuperclass();
+        }
+        return fields;
+    }
+
+    // ------------------------------------------------------------------
+    // Types / outils
+    // ------------------------------------------------------------------
+
+    /** Types "simples" pouvant etre convertis depuis une chaine. */
+    private static boolean isSimpleType(Class<?> type) {
+        return type.isPrimitive()
+                || type.isEnum()
+                || type.equals(String.class)
+                || CharSequence.class.isAssignableFrom(type)
+                || Number.class.isAssignableFrom(type)
+                || type.equals(Boolean.class)
+                || type.equals(Character.class);
+    }
+
+    /** Types texte : une valeur quelconque y est acceptee telle quelle. */
+    private static boolean isTextType(Class<?> type) {
+        return type.equals(String.class) || CharSequence.class.isAssignableFrom(type);
+    }
+
+    private static boolean isListType(Class<?> type) {
+        return List.class.isAssignableFrom(type);
+    }
+
+    private static Class<?> listElementType(Type genericType) {
+        if (genericType instanceof ParameterizedType) {
+            Type argument = ((ParameterizedType) genericType).getActualTypeArguments()[0];
+            if (argument instanceof Class) {
+                return (Class<?>) argument;
+            }
+            if (argument instanceof ParameterizedType
+                    && ((ParameterizedType) argument).getRawType() instanceof Class) {
+                return (Class<?>) ((ParameterizedType) argument).getRawType();
+            }
+        }
+        return String.class;
+    }
+
+    private static boolean isWrapper(Class<?> primitive, Class<?> wrapper) {
+        if (primitive.equals(boolean.class)) return wrapper.equals(Boolean.class);
+        if (primitive.equals(byte.class)) return wrapper.equals(Byte.class);
+        if (primitive.equals(char.class)) return wrapper.equals(Character.class);
+        if (primitive.equals(short.class)) return wrapper.equals(Short.class);
+        if (primitive.equals(int.class)) return wrapper.equals(Integer.class);
+        if (primitive.equals(long.class)) return wrapper.equals(Long.class);
+        if (primitive.equals(float.class)) return wrapper.equals(Float.class);
+        if (primitive.equals(double.class)) return wrapper.equals(Double.class);
+        return false;
+    }
+
+    /** true si au moins un champ de la requete commence par le prefixe donne. */
+    private static boolean hasParametersWithPrefix(HttpServletRequest request, String prefix) {
+        if (prefix == null || prefix.isEmpty()) {
+            return !request.getParameterMap().isEmpty();
+        }
+        String expected = prefix + ".";
+        for (String key : request.getParameterMap().keySet()) {
+            if (key.startsWith(expected)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Nom du champ de formulaire associe a un parametre simple. */
+    private static String resolveName(Parameter parameter) throws BindingException {
+        RequestParam annotation = parameter.getAnnotation(RequestParam.class);
+        if (annotation != null && !annotation.value().isEmpty()) {
+            return annotation.value();
+        }
+        if (parameter.isNamePresent()) {
+            return parameter.getName();
+        }
+        throw new BindingException("Impossible de determiner le nom du champ pour un parametre de type "
+                + parameter.getType().getSimpleName()
+                + " : nommez-le avec @RequestParam(\"nom\") ou compilez les controleurs avec -parameters.");
+    }
+
+    /** false uniquement si @RequestParam(required = false). */
+    private static boolean isRequired(Parameter parameter) {
+        RequestParam annotation = parameter.getAnnotation(RequestParam.class);
+        return annotation != null && annotation.required();
     }
 }

@@ -19,7 +19,7 @@ Annotations du framework :
 - **Controller.java** : annotation `@Controller` (rétention RUNTIME) marquant une classe comme contrôleur à scanner.
 - **UrlMapping.java** : annotation `@UrlMapping` applicable aux méthodes. Définit `value()` (l'URL) et `method()` (méthode HTTP, ex : GET, POST). Sert à lier une méthode de contrôleur à une URL.
 - **WebAPI.java** : annotation `@WebAPI` applicable aux méthodes. Définit `api()` (l'URL de l'API) et `toJSON()` (true si le résultat doit être sérialisé en JSON, false si texte brut).
-- **RequestParam.java** : annotation `@RequestParam` applicable aux paramètres de méthode. Définit `value()` (nom du champ de formulaire, vide = nom du paramètre Java) et `required()` (champ obligatoire). C'est le point d'entrée du binding : les champs d'un formulaire deviennent les arguments de la méthode du contrôleur.
+- **RequestParam.java** : annotation `@RequestParam` applicable aux paramètres de méthode. Définit `value()` (nom du champ de formulaire, vide = nom du paramètre Java) et `required()` (champ obligatoire). C'est le point d'entrée du binding : les champs d'un formulaire deviennent les arguments de la méthode du contrôleur. Pour un paramètre objet, `value()` sert de préfixe aux champs (`@RequestParam("user")` → `user.nom`, `user.age`).
 
 ## src/main/java/lilifw/
 
@@ -38,5 +38,9 @@ Annotations du framework :
 - **URLMethod.java** : clé de routage composée d'une URL et d'une méthode HTTP. Implémente `equals`/`hashCode` pour être utilisable comme clé de `HashMap`.
 - **ModelAndView.java** : représente le couple vue + données. Contient le nom de la vue (`view`) et une map `data` d'attributs ; constructeur avec vue et objet, méthode `addObject`, getters.
 - **JsonSerializer.java** : sérialiseur JSON fait maison. Gère `null`, primitifs, nombres, booléens, caractères, énumérations, `CharSequence`, collections, tableaux, `Map` et objets (via leurs getters `getX()`/`isX()`). Détecte les cycles (références circulaires) et échappe correctement les chaînes.
-- **DataBinder.java** : cœur du binding. `bind(method, request, ctx)` construit le tableau d'arguments d'une méthode de contrôleur : injection automatique de `ApplicationContext` et de `HttpServletRequest`, puis lecture des champs de formulaire et conversion vers le type du paramètre (primitifs, wrappers, `String`, enums, `BigDecimal`/`BigInteger`). Le nom du champ vient de `@RequestParam("nom")` ou du nom du paramètre Java (compilation `-parameters`). Si un paramètre attend un objet (POJO), si la valeur ressemble à un objet/tableau JSON, si une conversion échoue ou si un champ obligatoire manque, une `BindingException` est levée.
-- **BindingException.java** : exception levée par `DataBinder` lors d'un échec de binding (donnée objet, conversion impossible, champ obligatoire absent).
+- **DataBinder.java** : cœur du binding. `bind(method, request, ctx)` construit le tableau d'arguments d'une méthode de contrôleur : injection automatique de `ApplicationContext` et de `HttpServletRequest`, puis lecture des champs de formulaire. Trois cas :
+  - paramètre simple (primitifs, wrappers, `String`, enums, `BigDecimal`/`BigInteger`) : la valeur du champ de même nom est convertie vers le type ;
+  - paramètre objet (POJO) : il est instancié (constructeur sans argument) puis rempli avec les champs du formulaire, y compris les objet imbriqués (`adresse.ville`) et les listes/tableaux (`roles`, plusieurs valeurs) ;
+  - paramètre `List`/tableau : rempli depuis plusieurs valeurs du même champ.
+  Le nom d'un champ vient de `@RequestParam("nom")` ou du nom du paramètre Java (compilation `-parameters`). Une `BindingException` n'est levée que pour un vrai échec (conversion impossible, champ obligatoire absent, objet non instanciable).
+- **BindingException.java** : exception levée par `DataBinder` lors d'un échec de binding (conversion impossible, champ obligatoire absent, objet sans constructeur sans argument).

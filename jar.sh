@@ -7,7 +7,6 @@ mkdir -p out
 # Compilation
 javac -parameters -Xlint -cp "lib/*" -d out $(find . -name "*.java")
 
-
 # Vérification
 if [ $? -ne 0 ]; then
     echo "Erreur de compilation"

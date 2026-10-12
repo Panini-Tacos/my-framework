@@ -84,7 +84,7 @@ public class FrontControllerServlet extends HttpServlet {
                 Object controllerInstance = controllerClass.getDeclaredConstructor().newInstance();
 
                 // Injection des parametres : ApplicationContext, HttpServletRequest
-                // et binding des champs de formulaire vers les parametres simples.
+                // et binding des champs de formulaire (donnees simples ou objets).
                 Object[] parameters = lilifw.utils.DataBinder.bind(foncApideURL.getMethode(), request, ctx);
 
                 // invoker la methode API 
@@ -131,8 +131,8 @@ public class FrontControllerServlet extends HttpServlet {
             Object controllerInstance = controllerClass.getDeclaredConstructor().newInstance();
 
             // Injection des parametres : ApplicationContext, HttpServletRequest
-            // et binding des champs de formulaire vers les parametres simples.
-            // Si un parametre attend un objet, DataBinder leve une BindingException.
+            // et binding des champs de formulaire. Les objets (POJO) sont
+            // instancies et remplis a partir des champs du formulaire.
             Object[] parameters = lilifw.utils.DataBinder.bind(foncDeURL.getMethode(), request, ctx);
 
             Object result = foncDeURL.getMethode().invoke(controllerInstance, parameters);

@@ -20,5 +20,5 @@
 | `src/main/java/lilifw/utils/URLMethod.java` | Clé de routage (URL + méthode HTTP) avec `equals`/`hashCode` pour les HashMap. |
 | `src/main/java/lilifw/utils/ModelAndView.java` | Couple vue + données : nom de la JSP (`view`) et map d'attributs (`data`) à injecter dans la requête. |
 | `src/main/java/lilifw/utils/JsonSerializer.java` | Sérialiseur JSON maison : gère primitifs, chaînes, enum, collections, tableaux, maps, objets via getters, échappement et détection de cycles. |
-| `src/main/java/lilifw/utils/DataBinder.java` | Cœur du binding : convertit les champs de formulaire en arguments de méthode (injection `ApplicationContext`/`HttpServletRequest`, conversion des types simples), lève `BindingException` si les données sont des objets. |
-| `src/main/java/lilifw/utils/BindingException.java` | Exception levée quand le binding échoue (donnée objet, conversion impossible, champ obligatoire absent). |
+| `src/main/java/lilifw/utils/DataBinder.java` | Cœur du binding : convertit les champs de formulaire en arguments de méthode (injection `ApplicationContext`/`HttpServletRequest`, données simples, objets/POJO remplis récursivement, listes), lève `BindingException` uniquement en cas de vrai échec. |
+| `src/main/java/lilifw/utils/BindingException.java` | Exception levée quand le binding échoue (conversion impossible, champ obligatoire absent, objet non instanciable). |

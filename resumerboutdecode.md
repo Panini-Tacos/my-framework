@@ -70,7 +70,7 @@ Classe centrale du framework : toutes les requêtes GET/POST passent par elle.
 3. Sinon on stocke l'URL dans l'attribut `url` de la requête.
 4. Si l'URL correspond à une API (`urlToApiMethods.get(new URLMethod(url, method))` non null) :
    - Instanciation du contrôleur par réflexion (`Class.forName` + constructeur sans argument).
-   - Construction des paramètres via `DataBinder.bind(methode, request, ctx)` : injection automatique de `ApplicationContext` et `HttpServletRequest`, et binding des champs de formulaire vers les paramètres simples (`@RequestParam` / nom du paramètre).
+   - Construction des paramètres via `DataBinder.bind(methode, request, ctx)` : injection automatique de `ApplicationContext` et `HttpServletRequest`, plus binding des champs de formulaire vers les paramètres simples et les objets/POJO (`@RequestParam` / nom du paramètre).
    - Invocation de la méthode par réflexion.
    - Si `toJson == true` : écrit le résultat sérialisé en JSON via `JsonSerializer`, sinon `String.valueOf(result)` en texte brut.
    - En cas d'exception (dont `BindingException`) : HTTP 500 + JSON `{"error": "message"}`.
@@ -79,7 +79,7 @@ Classe centrale du framework : toutes les requêtes GET/POST passent par elle.
    - Collecte des routes commençant par ce préfixe pour aide au diagnostic.
    - Forward vers `/route.jsp` avec `notFoundUrl` et `matchingRoutes`.
 6. Si correspondance trouvée :
-   - Même logique d'instanciation/injection/invocation par réflexion que pour l'API (arguments construits par `DataBinder.bind(...)`). Si un paramètre attend un objet, `DataBinder` lève une `BindingException`.
+   - Même logique d'instanciation/injection/invocation par réflexion que pour l'API (arguments construits par `DataBinder.bind(...)`, objets compris).
    - Si le résultat est un `ModelAndView` : chaque entrée de `mv.getData()` devient un attribut de la requête, puis forward vers `/<view>.jsp`.
    - Sinon : forward vers `/route.jsp` avec le nom du contrôleur et de la méthode.
 
@@ -162,21 +162,31 @@ Cœur du binding : transforme les champs d'un formulaire (paramètres de la requ
 - `bind(Method method, HttpServletRequest request, ApplicationContext ctx)` : point d'entrée. Renvoie un tableau d'arguments, un par paramètre de la méthode.
   - Pour chaque paramètre :
     - Si le type est `ApplicationContext` → injecte `ctx` ; si c'est `HttpServletRequest` → injecte `request`.
-    - Si le type n'est pas "simple" (objet/POJO) → lève `BindingException` : le binding ne supporte que les données simples.
-    - Sinon, lit `request.getParameter(nom)` où `nom` vient de `@RequestParam("nom")` ou du nom du paramètre Java (`resolveName`, nécessite `-parameters`).
-    - Si le champ est absent : lève `BindingException` si c'est un primitif ou `@RequestParam(required = true)` ; sinon passe `null`.
-    - Si la valeur ressemble à un objet/tableau JSON (`{...}`/`[...]`) et que le type n'est pas du texte → lève `BindingException`.
-    - Sinon convertit la valeur avec `convert(...)`.
-- `isSimpleType(Class)` / `isTextType(Class)` : déterminent les types acceptés (primitifs, wrappers, `String`, enums, `BigDecimal`/`BigInteger`).
-- `resolveName(Parameter)` : nom du champ (`@RequestParam`, sinon nom du paramètre). Lève `BindingException` si le nom ne peut pas être déterminé.
-- `isRequired(Parameter)` : `false` uniquement si `@RequestParam(required = false)`.
-- `looksLikeObject(String)` : détecte une valeur de la forme `{...}` ou `[...]`.
+    - Si le type est **simple** → `bindSimple(...)`.
+    - Si le type est un **tableau** ou une `List` → `bindCollection(...)` (valeurs multiples du même champ).
+    - Sinon c'est un **objet (POJO)** → `bindObject(...)` : instanciation puis remplissage récursif.
+- `bindSimple(parameter, type, request)` : lit `request.getParameter(nom)`. Si absent : `BindingException` pour un primitif ou `@RequestParam(required = true)`, sinon `null`. Sinon convertit avec `convert(...)`.
+- `bindCollection(parameter, type, request)` : lit `request.getParameterValues(nom)` et construit un tableau ou une `List` en convertissant chaque valeur.
+- `bindObject(parameter, type, request)` : détermine le préfixe (`objectPrefix`), renvoie `null` si `@RequestParam(required = false)` et aucun champ correspondant, sinon instancie la classe (`instantiate`) et la remplit (`populate`).
+- `populate(target, prefix, request)` : parcourt les champs de la classe (et de ses parents, `allFields`). Pour chaque champ :
+  - type simple → `request.getParameter(prefix.champ)` puis `writeProperty` ;
+  - tableau / `List` → `request.getParameterValues(prefix.champ)` ;
+  - objet imbriqué → rempli récursivement seulement si des champs commencent par `prefix.champ.` (notation pointée, ex. `adresse.ville`).
+- `objectPrefix(parameter, request)` : `@RequestParam("x")` → préfixe `x` ; sinon auto-détection du nom du paramètre ; sinon binding "plat" (les champs du formulaire portent directement le nom des propriétés).
+- `instantiate(type)` : constructeur sans argument (accessible par réflexion) ; lève `BindingException` s'il n'existe pas.
+- `writeProperty` / `readProperty` : écrivent/ lisent une propriété en préférant le setter/getter (`setX`, `getX`/`isX`), sinon le champ directement.
 - `convert(value, type, name)` : conversion vers le type cible (`String`, enum, booléen, caractère, tous les nombres, `BigDecimal`/`BigInteger`) ; toute erreur est encapsulée dans une `BindingException`.
+- `convertArray` / `convertList` : convertissent plusieurs valeurs.
+- `isSimpleType(Class)` / `isTextType(Class)` : déterminent les types convertibles depuis une chaîne (primitifs, wrappers, `String`, enums, `BigDecimal`/`BigInteger`).
+- `listElementType(Type)` : type d'élément d'une `List` (via les génériques, `String` par défaut).
 - `parseBoolean(String)` : conversion tolérante (`true`/`on`/`yes`/`1`), pratique pour les cases à cocher HTML.
+- `hasParametersWithPrefix(request, prefix)` : indique si au moins un champ de la requête commence par le préfixe.
+- `resolveName(Parameter)` : nom du champ d'un paramètre simple (`@RequestParam`, sinon nom du paramètre). Lève `BindingException` si le nom ne peut pas être déterminé.
+- `isRequired(Parameter)` : `false` uniquement si `@RequestParam(required = false)`.
 
 ## `src/main/java/lilifw/utils/BindingException.java`
 
-Exception (checked) levée par `DataBinder` lorsqu'un binding échoue : donnée objet, valeur objet dans un champ simple, conversion impossible ou champ obligatoire absent. Deux constructeurs : message seul, ou message + cause.
+Exception (checked) levée par `DataBinder` lorsqu'un binding échoue pour une vraie raison : conversion impossible, champ obligatoire absent, ou objet impossible à instancier (pas de constructeur sans argument). Le binding d'un objet n'est donc plus une erreur en soi : il est désormais pris en charge. Deux constructeurs : message seul, ou message + cause.
 
 ## `test.sh`
 

@@ -163,14 +163,18 @@ Cœur du binding : transforme les champs d'un formulaire (paramètres de la requ
   - Pour chaque paramètre :
     - Si le type est `ApplicationContext` → injecte `ctx` ; si c'est `HttpServletRequest` → injecte `request`.
     - Si le type est **simple** → `bindSimple(...)`.
+    - Si le type est `UploadedFile` → `bindFile(...)`.
+    - Si le type est un **tableau/List de fichiers** (`UploadedFile[]`, `List<UploadedFile>`, `Part[]`...) → `bindFileCollection(...)`.
     - Si le type est un **tableau** ou une `List` → `bindCollection(...)` (valeurs multiples du même champ).
     - Sinon c'est un **objet (POJO)** → `bindObject(...)` : instanciation puis remplissage récursif.
 - `bindSimple(parameter, type, request)` : lit `request.getParameter(nom)`. Si absent : `BindingException` pour un primitif ou `@RequestParam(required = true)`, sinon `null`. Sinon convertit avec `convert(...)`.
 - `bindCollection(parameter, type, request)` : lit `request.getParameterValues(nom)` et construit un tableau ou une `List` en convertissant chaque valeur.
+- `bindFile(parameter, type, request)` / `bindFileCollection(...)` : recherche la (les) partie(s) `Part` du formulaire portant le nom du champ (`findPart`/`findParts`, uniquement si la requête est `multipart/`). Champ absent ou vide : `BindingException` si obligatoire, sinon `null`. `toFileType(...)` construit l'objet injecté : `Part` brut si c'est le type demandé, sinon `UploadedFile` — **enregistré automatiquement** dans le dossier configuré (`.txt` via `Uploads.save`), le chemin étant disponible avec `getSavedPath()`.
 - `bindObject(parameter, type, request)` : détermine le préfixe (`objectPrefix`), renvoie `null` si `@RequestParam(required = false)` et aucun champ correspondant, sinon instancie la classe (`instantiate`) et la remplit (`populate`).
 - `populate(target, prefix, request)` : parcourt les champs de la classe (et de ses parents, `allFields`). Pour chaque champ :
   - type simple → `request.getParameter(prefix.champ)` puis `writeProperty` ;
   - tableau / `List` → `request.getParameterValues(prefix.champ)` ;
+  - fichier (`UploadedFile`/`Part`, tableau/List de fichiers) → partie `Part` de nom `prefix.champ` (ex. `user.photo`), enregistrée automatiquement comme les paramètres fichiers ;
   - objet imbriqué → rempli récursivement seulement si des champs commencent par `prefix.champ.` (notation pointée, ex. `adresse.ville`).
 - `objectPrefix(parameter, request)` : `@RequestParam("x")` → préfixe `x` ; sinon auto-détection du nom du paramètre ; sinon binding "plat" (les champs du formulaire portent directement le nom des propriétés).
 - `instantiate(type)` : constructeur sans argument (accessible par réflexion) ; lève `BindingException` s'il n'existe pas.
@@ -183,6 +187,26 @@ Cœur du binding : transforme les champs d'un formulaire (paramètres de la requ
 - `hasParametersWithPrefix(request, prefix)` : indique si au moins un champ de la requête commence par le préfixe.
 - `resolveName(Parameter)` : nom du champ d'un paramètre simple (`@RequestParam`, sinon nom du paramètre). Lève `BindingException` si le nom ne peut pas être déterminé.
 - `isRequired(Parameter)` : `false` uniquement si `@RequestParam(required = false)`.
+
+## `src/main/java/lilifw/utils/UploadedFile.java`
+
+Fichier téléversé par un formulaire `multipart/form-data`, encapsulant un `Part` du conteneur. C'est le type à déclarer dans un paramètre de contrôleur (même principe que le binding) : `@RequestParam("photo") UploadedFile photo`.
+
+- `getOriginalFilename()` / `getContentType()` / `getSize()` : nom envoyé par le navigateur, type MIME, taille.
+- `getBytes()` / `getInputStream()` : contenu du fichier (l'`InputStream` est à fermer par l'appelant).
+- `isEmpty()` : vrai si aucun fichier n'a été sélectionné (champ vide).
+- `getSavedPath()` / `getSavedName()` / `getSavedFile()` : chemin, nom et `File` du `.txt` écrit par le framework **automatiquement au binding** (sinon `null`).
+- `save()` / `saveTo(File)` : ré-enregistre le contenu dans le dossier configuré ou un dossier choisi (via `Uploads`).
+- `getPart()` : accès au `Part` Servlet sous-jacent.
+
+## `src/main/java/lilifw/utils/Uploads.java`
+
+Configuration et enregistrement des fichiers téléversés. Le dossier de stockage est **variable** : paramètre d'init `uploadPath` du `web.xml` (lu au démarrage par `LiliFWContextListener` via `configure(...)`), sinon le dossier `uploads` par défaut (`getUploadPath()`).
+
+- `INIT_PARAM` (`"uploadPath"`) / `DEFAULT_PATH` (`"uploads"`) / `STORAGE_EXTENSION` (`".txt"`).
+- `configure(path)` : fixe le dossier au démarrage (ignoré si vide/null).
+- `save(UploadedFile)` / `save(UploadedFile, File)` : crée le dossier si besoin, assainit le nom d'origine (`sanitizeFilename` : pas de `../`, pas de séparateurs ni de caractères problématiques), remplace l'extension par `.txt` (stockage simplifié, ex. `photo.png` → `photo.txt`), génère un nom unique (`photo.txt`, `photo-1.txt`...) et copie le contenu. Un `UploadedFile` vide est refusé (`IllegalArgumentException`).
+- `markSaved(file)` : appelé par `Uploads` pour que l'objet exposé le chemin écrit.
 
 ## `src/main/java/lilifw/utils/BindingException.java`
 

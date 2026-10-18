@@ -17,6 +17,11 @@ public class LiliFWContextListener implements ServletContextListener {
         ServletContext context = event.getServletContext();
         String packageLocation = context.getInitParameter("package");
 
+        // Dossier de stockage des fichiers televerses : variable, configure ici
+        // (param "uploadPath" du web.xml) ; voir lilifw.utils.Uploads.
+        Uploads.configure(context.getInitParameter(Uploads.INIT_PARAM));
+        context.setAttribute("uploadPath", Uploads.getUploadPath());
+
         Map<URLMethod, ControllerMethods> urlToMethods = new HashMap<>();
         Map<URLMethod,ApiMethods>  urlToApiMethods = new HashMap<>();
 

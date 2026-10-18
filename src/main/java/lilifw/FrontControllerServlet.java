@@ -5,6 +5,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.annotation.MultipartConfig;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -18,6 +19,16 @@ import lilifw.utils.JsonSerializer;
 import lilifw.utils.ModelAndView;
 import lilifw.utils.URLMethod;
 
+/**
+ * Servlet frontal de LiliFW.
+ *
+ * <p>L'annotation {@code @MultipartConfig} permet au conteneur d'accepter les
+ * formulaires {@code multipart/form-data} (upload de fichiers) sans
+ * configuration supplementaire dans le web.xml. Les limites (20 Mo par
+ * fichier, 30 Mo par requete) peuvent etre surchargees dans le web.xml via
+ * {@code <multipart-config>} si besoin.</p>
+ */
+@MultipartConfig(maxFileSize = 20L * 1024 * 1024, maxRequestSize = 30L * 1024 * 1024, fileSizeThreshold = 1024 * 1024)
 public class FrontControllerServlet extends HttpServlet {
 
     Map<URLMethod, ControllerMethods> urlToMethods;
@@ -73,6 +84,14 @@ public class FrontControllerServlet extends HttpServlet {
         }
 
         request.setAttribute("url", url);
+
+        // Requetes multipart (upload de fichiers) : on force la lecture du corps
+        // AVANT le binding, pour que les "parts" (fichiers) restent disponibles
+        // meme si des champs de formulaire sont lus en premier.
+        String contentType = request.getContentType();
+        if (contentType != null && contentType.toLowerCase().startsWith("multipart/")) {
+            request.getParts();
+        }
 
         // D'abord verifier si la methode existe dans urlToApiMethods
         ApiMethods foncApideURL = urlToApiMethods.get(new URLMethod(url, request.getMethod()));

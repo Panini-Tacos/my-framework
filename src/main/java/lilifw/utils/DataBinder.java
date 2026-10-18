@@ -1,5 +1,6 @@
 package lilifw.utils;
 
+import java.io.IOException;
 import java.lang.reflect.Array;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -15,7 +16,9 @@ import java.util.List;
 
 import org.springframework.context.ApplicationContext;
 
+import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.Part;
 import lilifw.annotation.RequestParam;
 
 /**
@@ -28,6 +31,12 @@ import lilifw.annotation.RequestParam;
  *       injecte automatiquement par le framework ;</li>
  *   <li>un parametre simple (primitif, wrapper, String, enum, BigDecimal/
  *       BigInteger) recoit la valeur du champ de meme nom ;</li>
+ *   <li>un parametre {@link UploadedFile} (ou {@code Part}) recoit le fichier
+ *       televerse par un champ {@code <input type="file">} d'un formulaire
+ *       {@code multipart/form-data} ; le {@code UploadedFile} est enregistre
+ *       automatiquement, sous forme de ".txt", dans le dossier de stockage
+ *       configure ({@code uploadPath} du web.xml) et son chemin est
+ *       accessible via {@code getSavedPath()} ;</li>
  *   <li>un parametre objet (POJO) est instancie puis rempli avec les champs du
  *       formulaire. Les champs peuvent etre "plats" ({@code nom}) ou prefixes
  *       ({@code user.nom}) ; les objets imbriques utilisent la notation pointee
@@ -78,6 +87,12 @@ public class DataBinder {
 
             if (isSimpleType(type)) {
                 arguments[i] = bindSimple(parameter, type, request);
+            } else if (isFileType(type)) {
+                // Fichier televerse (multipart/form-data).
+                arguments[i] = bindFile(parameter, type, request);
+            } else if (isFileTypeCollection(type, parameter.getParameterizedType())) {
+                // Plusieurs fichiers sur le meme champ.
+                arguments[i] = bindFileCollection(parameter, type, request);
             } else if (type.isArray() || isListType(type)) {
                 arguments[i] = bindCollection(parameter, type, request);
             } else {
@@ -132,6 +147,121 @@ public class DataBinder {
     }
 
     // ------------------------------------------------------------------
+    // Parametre fichier (upload multipart)
+    // ------------------------------------------------------------------
+
+    private static Object bindFile(Parameter parameter, Class<?> type, HttpServletRequest request)
+            throws BindingException {
+        String name = resolveName(parameter);
+        Part part = findPart(request, name);
+
+        if (part == null || isBlankFilename(part)) {
+            if (isRequired(parameter)) {
+                throw new BindingException("Le champ obligatoire '" + name + "' ne contient aucun fichier.");
+            }
+            return null;
+        }
+        return toFileType(type, part, name);
+    }
+
+    private static Object bindFileCollection(Parameter parameter, Class<?> type, HttpServletRequest request)
+            throws BindingException {
+        String name = resolveName(parameter);
+        Class<?> elementType = type.isArray()
+                ? type.getComponentType()
+                : listElementType(parameter.getParameterizedType());
+
+        List<Part> parts = findParts(request, name);
+        if (parts.isEmpty()) {
+            if (isRequired(parameter)) {
+                throw new BindingException("Le champ obligatoire '" + name + "' ne contient aucun fichier.");
+            }
+            return null;
+        }
+        return toFileTypeCollection(type, elementType, parts, name);
+    }
+
+    /** Part (fichier) correspondant au champ donne ; null si absent ou vide. */
+    private static Part findPart(HttpServletRequest request, String name) throws BindingException {
+        List<Part> parts = findParts(request, name);
+        return parts.isEmpty() ? null : parts.get(0);
+    }
+
+    /** Toutes les parties "fichier" portant le nom de champ donne. */
+    private static List<Part> findParts(HttpServletRequest request, String name) throws BindingException {
+        List<Part> result = new ArrayList<>();
+        if (!isMultipart(request)) {
+            return result;
+        }
+        try {
+            for (Part part : request.getParts()) {
+                if (part.getName().equals(name) && !isBlankFilename(part)) {
+                    result.add(part);
+                }
+            }
+        } catch (IllegalStateException e) {
+            throw new BindingException("Impossible de lire les fichiers de la requete : le servlet doit etre "
+                    + "configure pour le multipart (annotation @MultipartConfig).", e);
+        } catch (IOException | ServletException e) {
+            throw new BindingException("Erreur lors de la lecture du champ fichier '" + name + "' : "
+                    + e.getMessage(), e);
+        }
+        return result;
+    }
+
+    /**
+     * Construit un UploadedFile (ou renvoie la Part brute si c'est le type
+     * demande) et enregistre automatiquement le contenu dans le dossier de
+     * stockage configure, sous forme de ".txt".
+     */
+    private static Object toFileType(Class<?> type, Part part, String name) throws BindingException {
+        if (Part.class.equals(type)) {
+            return part;
+        }
+        if (UploadedFile.class.equals(type)) {
+            UploadedFile file = new UploadedFile(part);
+            try {
+                // Enregistrement automatique au binding : ".txt" dans le
+                // dossier configure (uploadPath du web.xml, sinon "uploads").
+                file.save();
+            } catch (IOException e) {
+                throw new BindingException("Impossible d'enregistrer le fichier '" + name + "' : "
+                        + e.getMessage(), e);
+            }
+            return file;
+        }
+        throw new BindingException("Type non supporte pour le champ fichier '" + name + "' : "
+                + type.getSimpleName() + " (utilisez UploadedFile ou Part).");
+    }
+
+    /** Construit un tableau ou une liste de fichiers (UploadedFile[] / List<UploadedFile>). */
+    private static Object toFileTypeCollection(Class<?> collectionType, Class<?> elementType, List<Part> parts,
+            String name) throws BindingException {
+        if (!isFileType(elementType)) {
+            throw new BindingException("Type non supporte pour le champ fichier '" + name + "' : "
+                    + collectionType.getSimpleName() + " (utilisez UploadedFile ou Part).");
+        }
+        if (collectionType.isArray()) {
+            Object array = Array.newInstance(elementType, parts.size());
+            for (int i = 0; i < parts.size(); i++) {
+                Array.set(array, i, toFileType(elementType, parts.get(i), name));
+            }
+            return array;
+        }
+        List<Object> files = new ArrayList<>();
+        for (Part part : parts) {
+            files.add(toFileType(elementType, part, name));
+        }
+        return files;
+    }
+
+    /** true si la part ne contient aucun fichier (champ <input type="file"> vide). */
+    private static boolean isBlankFilename(Part part) {
+        String submittedFileName = part.getSubmittedFileName();
+        return submittedFileName == null || submittedFileName.isEmpty();
+    }
+
+    // ------------------------------------------------------------------
     // Parametre objet (POJO)
     // ------------------------------------------------------------------
 
@@ -176,6 +306,21 @@ public class DataBinder {
                 String[] values = request.getParameterValues(fullName);
                 if (values != null) {
                     writeProperty(target, field, convertList(values, listElementType(field.getGenericType()), fullName));
+                }
+            } else if (isFileType(fieldType)) {
+                // Champ fichier : photo, piece jointe... (formulaire multipart).
+                Part part = findPart(request, fullName);
+                if (part != null) {
+                    writeProperty(target, field, toFileType(fieldType, part, fullName));
+                }
+            } else if (isFileTypeCollection(fieldType, field.getGenericType())) {
+                // Champ fichier multiple ( UploadedFile[] / List<UploadedFile> ).
+                Class<?> elementType = fieldType.isArray()
+                        ? fieldType.getComponentType()
+                        : listElementType(field.getGenericType());
+                List<Part> parts = findParts(request, fullName);
+                if (!parts.isEmpty()) {
+                    writeProperty(target, field, toFileTypeCollection(fieldType, elementType, parts, fullName));
                 }
             } else {
                 // Objet imbrique : on ne le remplit que si des champs le concernent
@@ -392,6 +537,25 @@ public class DataBinder {
         return List.class.isAssignableFrom(type);
     }
 
+    /** Types representant un fichier televerse (upload multipart). */
+    private static boolean isFileType(Class<?> type) {
+        return UploadedFile.class.equals(type) || Part.class.equals(type);
+    }
+
+    /** true pour UploadedFile[], List<UploadedFile>, Part[], List<Part>... */
+    private static boolean isFileTypeCollection(Class<?> type, Type genericType) {
+        if (type.isArray()) {
+            return isFileType(type.getComponentType());
+        }
+        return isListType(type) && isFileType(listElementType(genericType));
+    }
+
+    /** true si la requete est un formulaire multipart/form-data (upload). */
+    private static boolean isMultipart(HttpServletRequest request) {
+        String contentType = request.getContentType();
+        return contentType != null && contentType.toLowerCase().startsWith("multipart/");
+    }
+
     private static Class<?> listElementType(Type genericType) {
         if (genericType instanceof ParameterizedType) {
             Type argument = ((ParameterizedType) genericType).getActualTypeArguments()[0];
@@ -427,6 +591,19 @@ public class DataBinder {
         for (String key : request.getParameterMap().keySet()) {
             if (key.startsWith(expected)) {
                 return true;
+            }
+        }
+        // En multipart, les champs de type <input type="file"> n'apparaissent
+        // pas dans les parametres : on verifie aussi le nom des "parts".
+        if (isMultipart(request)) {
+            try {
+                for (Part part : request.getParts()) {
+                    if (part.getName().startsWith(expected)) {
+                        return true;
+                    }
+                }
+            } catch (Exception ignored) {
+                // Requete illisible : on considere qu'aucun champ ne correspond.
             }
         }
         return false;

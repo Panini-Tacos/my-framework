@@ -2,12 +2,7 @@ package JSF.utils;
 
 import java.lang.reflect.Array;
 import java.lang.reflect.Method;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.IdentityHashMap;
-import java.util.Map;
-import java.util.Set;
-
+import java.util.*;
 public class JsonSerializer {
 
     public static String serialize(Object object) throws Exception {

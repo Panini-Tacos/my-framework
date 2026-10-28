@@ -1,9 +1,6 @@
 package JSF.annotation;
 
-import java.lang.annotation.ElementType;
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
-import java.lang.annotation.Target;
+import java.lang.annotation.*;
 
 /**
  * Lie un parametre de methode d'un controleur a un champ de formulaire

@@ -1,7 +1,6 @@
 package JSF.utils;
 
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 
 public class ModelAndView {
     private String view;

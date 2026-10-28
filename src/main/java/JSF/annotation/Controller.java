@@ -1,7 +1,7 @@
 package JSF.annotation;
 
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.*;
+// import java.lang.annotation.RetentionPolicy;
 
 // @Target(ElementType.PACKAGE) 
 

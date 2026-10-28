@@ -6,9 +6,7 @@ import java.net.URL;
 // import java.util.List;
 import java.util.Map;
 
-import JSF.annotation.Controller;
-import JSF.annotation.UrlMapping;
-import JSF.annotation.WebAPI;
+import JSF.annotation.*;
 
 public class Util {
     // public static void scanAllAnnotedControllers(String

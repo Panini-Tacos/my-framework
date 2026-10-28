@@ -1,23 +1,19 @@
-package lilifw;
+package JSF;
 
 import java.io.IOException;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+// import java.util.List;
+// import java.util.Map;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.annotation.MultipartConfig;
-import jakarta.servlet.http.HttpServlet;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.*;
+
+// import jakarta.servlet.http.HttpServletRequest;
+// import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.ApplicationContext;
 import org.springframework.web.context.support.WebApplicationContextUtils;
 
-import lilifw.annotation.WebAPI;
-import lilifw.utils.ApiMethods;
-import lilifw.utils.ControllerMethods;
-import lilifw.utils.JsonSerializer;
-import lilifw.utils.ModelAndView;
-import lilifw.utils.URLMethod;
+import JSF.utils.*;
 
 /**
  * Servlet frontal de LiliFW.
@@ -104,7 +100,7 @@ public class FrontControllerServlet extends HttpServlet {
 
                 // Injection des parametres : ApplicationContext, HttpServletRequest
                 // et binding des champs de formulaire (donnees simples ou objets).
-                Object[] parameters = lilifw.utils.DataBinder.bind(foncApideURL.getMethode(), request, ctx);
+                Object[] parameters = JSF.utils.DataBinder.bind(foncApideURL.getMethode(), request, ctx);
 
                 // invoker la methode API 
                 Object result = foncApideURL.getMethode().invoke(controllerInstance, parameters);
@@ -152,7 +148,7 @@ public class FrontControllerServlet extends HttpServlet {
             // Injection des parametres : ApplicationContext, HttpServletRequest
             // et binding des champs de formulaire. Les objets (POJO) sont
             // instancies et remplis a partir des champs du formulaire.
-            Object[] parameters = lilifw.utils.DataBinder.bind(foncDeURL.getMethode(), request, ctx);
+            Object[] parameters = JSF.utils.DataBinder.bind(foncDeURL.getMethode(), request, ctx);
 
             Object result = foncDeURL.getMethode().invoke(controllerInstance, parameters);
 

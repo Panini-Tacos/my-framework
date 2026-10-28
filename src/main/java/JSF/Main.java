@@ -1,13 +1,13 @@
-package lilifw;
+package JSF;
 
 import java.util.HashMap;
 import java.util.Map;
 
-import lilifw.utils.ControllerMethods;
+import JSF.utils.ControllerMethods;
 
 public class Main {
     public static void main(String[] args) {
-        String url = "lilifw";
+        // String url = "jframework";
 
         Map<String,ControllerMethods> contMethods = new HashMap<>();
         

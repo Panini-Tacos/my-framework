@@ -1,4 +1,4 @@
-package lilifw.utils;
+package JSF.utils;
 
 /**
  * Levee lorsque le "binding" d'un formulaire vers les arguments d'une methode

@@ -1,4 +1,4 @@
-package lilifw.annotation;
+package JSF.annotation;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;

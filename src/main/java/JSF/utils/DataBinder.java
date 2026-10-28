@@ -1,4 +1,4 @@
-package lilifw.utils;
+package JSF.utils;
 
 import java.io.IOException;
 import java.lang.reflect.Array;
@@ -16,10 +16,10 @@ import java.util.List;
 
 import org.springframework.context.ApplicationContext;
 
+import JSF.annotation.RequestParam;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.Part;
-import lilifw.annotation.RequestParam;
 
 /**
  * Coeur du "binding" : transforme les champs d'un formulaire (parametres de la

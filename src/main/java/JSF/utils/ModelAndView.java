@@ -1,4 +1,4 @@
-package lilifw.utils;
+package JSF.utils;
 
 import java.util.HashMap;
 import java.util.Map;

@@ -1,6 +1,7 @@
 package JSF;
 
 import java.io.IOException;
+import java.lang.reflect.Method;
 import java.util.*;
 // import java.util.List;
 // import java.util.Map;
@@ -13,17 +14,10 @@ import jakarta.servlet.http.*;
 import org.springframework.context.ApplicationContext;
 import org.springframework.web.context.support.WebApplicationContextUtils;
 
+import JSF.annotation.Auth;
 import JSF.utils.*;
 
-/**
- * Servlet frontal de LiliFW.
- *
- * <p>L'annotation {@code @MultipartConfig} permet au conteneur d'accepter les
- * formulaires {@code multipart/form-data} (upload de fichiers) sans
- * configuration supplementaire dans le web.xml. Les limites (20 Mo par
- * fichier, 30 Mo par requete) peuvent etre surchargees dans le web.xml via
- * {@code <multipart-config>} si besoin.</p>
- */
+
 @MultipartConfig(maxFileSize = 20L * 1024 * 1024, maxRequestSize = 30L * 1024 * 1024, fileSizeThreshold = 1024 * 1024)
 public class FrontControllerServlet extends HttpServlet {
 
@@ -31,11 +25,13 @@ public class FrontControllerServlet extends HttpServlet {
     Map<URLMethod, ApiMethods> urlToApiMethods = new HashMap<>();
 
     private ApplicationContext ctx;
+    private String authSessionKey;
 
     @SuppressWarnings("unchecked")
     public void init() throws ServletException {
         urlToMethods = (Map<URLMethod, ControllerMethods>) getServletContext().getAttribute("urlToMethods");
         urlToApiMethods = (Map<URLMethod, ApiMethods>) getServletContext().getAttribute("urlToApiMethods");
+        authSessionKey = AuthSupport.sessionKey(getServletContext());
 
         try {
             ctx = WebApplicationContextUtils.getRequiredWebApplicationContext(getServletContext());
@@ -50,7 +46,7 @@ public class FrontControllerServlet extends HttpServlet {
         try {
             processRequest(request, response);
         } catch (Exception e) {
-            // TODO Auto-generated catch block
+
             throw new ServletException(e.getMessage(), e);
         }
     }
@@ -61,7 +57,6 @@ public class FrontControllerServlet extends HttpServlet {
         try {
             processRequest(request, response);
         } catch (Exception e) {
-            // TODO Auto-generated catch block
             throw new ServletException(e.getMessage(), e);
         }
     }
@@ -81,29 +76,34 @@ public class FrontControllerServlet extends HttpServlet {
 
         request.setAttribute("url", url);
 
-        // Requetes multipart (upload de fichiers) : on force la lecture du corps
-        // AVANT le binding, pour que les "parts" (fichiers) restent disponibles
-        // meme si des champs de formulaire sont lus en premier.
         String contentType = request.getContentType();
         if (contentType != null && contentType.toLowerCase().startsWith("multipart/")) {
             request.getParts();
         }
 
-        // D'abord verifier si la methode existe dans urlToApiMethods
         ApiMethods foncApideURL = urlToApiMethods.get(new URLMethod(url, request.getMethod()));
         if (foncApideURL != null) {
-            // retourner du json
+            Method methodeApi = foncApideURL.getMethode();
+            if (!estAutorise(methodeApi, request)) {
+                response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                response.setContentType("application/json; charset=UTF-8");
+                response.getWriter().write("{\"error\": "
+                        + JsonSerializer.serialize("Authentification requise") + "}");
+                return;
+            }
+
             try {
                 // Chargement de la classe pour prendre en compte ApplicationContext
                 Class<?> controllerClass = Class.forName(foncApideURL.getController());
                 Object controllerInstance = controllerClass.getDeclaredConstructor().newInstance();
 
-                // Injection des parametres : ApplicationContext, HttpServletRequest
-                // et binding des champs de formulaire (donnees simples ou objets).
-                Object[] parameters = JSF.utils.DataBinder.bind(foncApideURL.getMethode(), request, ctx);
+                // Injection des parametres : ApplicationContext, HttpServletRequest,
+                // HttpSession et binding des champs de formulaire (donnees simples
+                // ou objets).
+                Object[] parameters = JSF.utils.DataBinder.bind(methodeApi, request, ctx);
 
                 // invoker la methode API 
-                Object result = foncApideURL.getMethode().invoke(controllerInstance, parameters);
+                Object result = methodeApi.invoke(controllerInstance, parameters);
 
                 // verifier si le developpeur a mis true ou false dans le mode de retour JSON
                 if (foncApideURL.isToJson()) {
@@ -114,7 +114,11 @@ public class FrontControllerServlet extends HttpServlet {
                     response.getWriter().write(String.valueOf(result));
                 }
             } catch (Exception e) {
-                Throwable cause = e.getCause() != null ? e.getCause() : e;
+                
+                Throwable cause = e;
+                if (e instanceof java.lang.reflect.InvocationTargetException && e.getCause() != null) {
+                    cause = e.getCause();
+                }
                 response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
                 response.setContentType("application/json; charset=UTF-8");
                 response.getWriter().write("{\"error\": " + JsonSerializer.serialize(cause.getMessage()) + "}");
@@ -142,12 +146,21 @@ public class FrontControllerServlet extends HttpServlet {
                 return;
             }
 
+            if (!estAutorise(foncDeURL.getMethode(), request)) {
+                request.setAttribute("authMessage",
+                        "Authentification requise pour accéder à cette action.");
+                request.setAttribute("authReturnUrl", url);
+                response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                request.getRequestDispatcher("/auth.jsp").forward(request, response);
+                return;
+            }
+
             Class<?> controllerClass = Class.forName(foncDeURL.getControllerName());
             Object controllerInstance = controllerClass.getDeclaredConstructor().newInstance();
 
-            // Injection des parametres : ApplicationContext, HttpServletRequest
-            // et binding des champs de formulaire. Les objets (POJO) sont
-            // instancies et remplis a partir des champs du formulaire.
+            // Injection des parametres : ApplicationContext, HttpServletRequest,
+            // HttpSession et binding des champs de formulaire. Les objets (POJO)
+            // sont instancies et remplis a partir des champs du formulaire.
             Object[] parameters = JSF.utils.DataBinder.bind(foncDeURL.getMethode(), request, ctx);
 
             Object result = foncDeURL.getMethode().invoke(controllerInstance, parameters);
@@ -169,6 +182,24 @@ public class FrontControllerServlet extends HttpServlet {
 
     public Map<URLMethod, ControllerMethods> getUrlToMethods() {
         return urlToMethods;
+    }
+
+    /**
+     * Vérifie {@link Auth} sur la méthode ou sur sa classe. Une route non
+     * annotée est toujours autorisée. Une route annotée exige une session
+     * contenant l'attribut configuré par {@code authSessionKey} dans le
+     * web.xml.
+     */
+    private boolean estAutorise(Method methode, HttpServletRequest request) {
+        if (methode == null) {
+            return true;
+        }
+        boolean protegee = methode.isAnnotationPresent(Auth.class)
+                || methode.getDeclaringClass().isAnnotationPresent(Auth.class);
+        if (!protegee) {
+            return true;
+        }
+        return AuthSupport.isAuthenticated(request.getSession(false), authSessionKey);
     }
 
     // public Map<String, ControllerMethods> getUrlToMethods() {

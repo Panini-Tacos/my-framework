@@ -10,52 +10,14 @@ import org.springframework.context.ApplicationContext;
 import JSF.annotation.RequestParam;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
 import jakarta.servlet.http.Part;
 
-/**
- * Coeur du "binding" : transforme les champs d'un formulaire (parametres de la
- * requete HTTP) en arguments de la methode d'un controleur.
- *
- * <p>Pour chaque parametre de la methode :</p>
- * <ul>
- *   <li>un {@code ApplicationContext} ou un {@code HttpServletRequest} est
- *       injecte automatiquement par le framework ;</li>
- *   <li>un parametre simple (primitif, wrapper, String, enum, BigDecimal/
- *       BigInteger) recoit la valeur du champ de meme nom ;</li>
- *   <li>un parametre {@link UploadedFile} (ou {@code Part}) recoit le fichier
- *       televerse par un champ {@code <input type="file">} d'un formulaire
- *       {@code multipart/form-data} ; le {@code UploadedFile} est enregistre
- *       automatiquement, sous forme de ".txt", dans le dossier de stockage
- *       configure ({@code uploadPath} du web.xml) et son chemin est
- *       accessible via {@code getSavedPath()} ;</li>
- *   <li>un parametre objet (POJO) est instancie puis rempli avec les champs du
- *       formulaire. Les champs peuvent etre "plats" ({@code nom}) ou prefixes
- *       ({@code user.nom}) ; les objets imbriques utilisent la notation pointee
- *       ({@code adresse.ville}) et les listes/tableaux plusieurs valeurs.</li>
- * </ul>
- *
- * <p>Le nom d'un champ vient de {@code @RequestParam("nom")} ou, a defaut, du
- * nom du parametre Java (compilation avec {@code -parameters}).</p>
- *
- * <p>Une {@link BindingException} n'est levee que pour un vrai echec :
- * conversion impossible, champ obligatoire absent, objet non instanciable...</p>
- */
 public class DataBinder {
 
     private DataBinder() {
     }
 
-    /**
-     * Construit le tableau d'arguments a passer a la methode du controleur en
-     * lisant les champs du formulaire dans la requete.
-     *
-     * @param method  methode du controleur a invoquer
-     * @param request requete HTTP contenant les champs du formulaire
-     * @param ctx     contexte Spring eventuellement injecte (peut etre null)
-     * @return les arguments, dans l'ordre des parametres de la methode
-     * @throws BindingException si une conversion echoue, si un champ obligatoire
-     *                          est absent ou si un objet ne peut pas etre cree
-     */
     public static Object[] bind(Method method, HttpServletRequest request, ApplicationContext ctx)
             throws BindingException {
 
@@ -66,7 +28,6 @@ public class DataBinder {
             Parameter parameter = parameters[i];
             Class<?> type = parameter.getType();
 
-            // Objets fournis par le framework : pas de binding depuis le formulaire.
             if (ApplicationContext.class.equals(type)) {
                 arguments[i] = ctx;
                 continue;
@@ -75,19 +36,24 @@ public class DataBinder {
                 arguments[i] = request;
                 continue;
             }
+            if (HttpSession.class.equals(type)) {
+                // Cree la session si elle n'existe pas encore (comportement
+                // attendu quand le controleur demande explicitement la session).
+                arguments[i] = request.getSession(true);
+                continue;
+            }
 
             if (isSimpleType(type)) {
                 arguments[i] = bindSimple(parameter, type, request);
             } else if (isFileType(type)) {
-                // Fichier televerse (multipart/form-data).
+
                 arguments[i] = bindFile(parameter, type, request);
             } else if (isFileTypeCollection(type, parameter.getParameterizedType())) {
-                // Plusieurs fichiers sur le meme champ.
                 arguments[i] = bindFileCollection(parameter, type, request);
             } else if (type.isArray() || isListType(type)) {
                 arguments[i] = bindCollection(parameter, type, request);
             } else {
-                // Objet (POJO) : on l'instancie et on le remplit.
+
                 arguments[i] = bindObject(parameter, type, request);
             }
         }
@@ -105,7 +71,7 @@ public class DataBinder {
         String value = request.getParameter(name);
 
         if (value == null) {
-            // Un primitif ne peut jamais valoir null : il est obligatoire.
+
             if (type.isPrimitive() || isRequired(parameter)) {
                 throw new BindingException("Le champ obligatoire '" + name + "' est absent de la requete.");
             }
@@ -172,13 +138,11 @@ public class DataBinder {
         return toFileTypeCollection(type, elementType, parts, name);
     }
 
-    /** Part (fichier) correspondant au champ donne ; null si absent ou vide. */
     private static Part findPart(HttpServletRequest request, String name) throws BindingException {
         List<Part> parts = findParts(request, name);
         return parts.isEmpty() ? null : parts.get(0);
     }
 
-    /** Toutes les parties "fichier" portant le nom de champ donne. */
     private static List<Part> findParts(HttpServletRequest request, String name) throws BindingException {
         List<Part> result = new ArrayList<>();
         if (!isMultipart(request)) {
@@ -200,11 +164,7 @@ public class DataBinder {
         return result;
     }
 
-    /**
-     * Construit un UploadedFile (ou renvoie la Part brute si c'est le type
-     * demande) et enregistre automatiquement le contenu dans le dossier de
-     * stockage configure, sous forme de ".txt".
-     */
+
     private static Object toFileType(Class<?> type, Part part, String name) throws BindingException {
         if (Part.class.equals(type)) {
             return part;
@@ -212,8 +172,7 @@ public class DataBinder {
         if (UploadedFile.class.equals(type)) {
             UploadedFile file = new UploadedFile(part);
             try {
-                // Enregistrement automatique au binding : ".txt" dans le
-                // dossier configure (uploadPath du web.xml, sinon "uploads").
+                
                 file.save();
             } catch (IOException e) {
                 throw new BindingException("Impossible d'enregistrer le fichier '" + name + "' : "
@@ -225,7 +184,6 @@ public class DataBinder {
                 + type.getSimpleName() + " (utilisez UploadedFile ou Part).");
     }
 
-    /** Construit un tableau ou une liste de fichiers (UploadedFile[] / List<UploadedFile>). */
     private static Object toFileTypeCollection(Class<?> collectionType, Class<?> elementType, List<Part> parts,
             String name) throws BindingException {
         if (!isFileType(elementType)) {
@@ -246,22 +204,17 @@ public class DataBinder {
         return files;
     }
 
-    /** true si la part ne contient aucun fichier (champ <input type="file"> vide). */
     private static boolean isBlankFilename(Part part) {
         String submittedFileName = part.getSubmittedFileName();
         return submittedFileName == null || submittedFileName.isEmpty();
     }
 
-    // ------------------------------------------------------------------
-    // Parametre objet (POJO)
-    // ------------------------------------------------------------------
 
     private static Object bindObject(Parameter parameter, Class<?> type, HttpServletRequest request)
             throws BindingException {
         boolean annotated = parameter.getAnnotation(RequestParam.class) != null;
         String prefix = objectPrefix(parameter, request);
 
-        // @RequestParam(required = false) et aucun champ correspondant -> null.
         if (annotated && !isRequired(parameter) && !hasParametersWithPrefix(request, prefix)) {
             return null;
         }

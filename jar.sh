@@ -14,12 +14,12 @@ if [ $? -ne 0 ]; then
 fi
 
 # Création du JAR
-jar cf lilifw.jar -C out .
+jar cf JSF.jar -C out .
 mkdir -p output 
-mv lilifw.jar output
+mv JSF.jar output
 
-rm ../TEST_liliFW/lib/lilifw.jar
-cp output/lilifw.jar ../TEST_liliFW/lib/
+rm ../JSF-test/lib/JSF.jar
+cp output/JSF.jar ../JSF-test/lib/
 
-echo "JAR créé : lilifw.jar"
+echo "JAR créé : JSF.jar"
 rm -rf out

@@ -1,31 +1,34 @@
 package JSF.utils;
 
-
 import java.lang.reflect.Method;
 
 public class ControllerMethods {
-    public String controllerName;
-    public Method Methode;
-    
+
+    private String controllerName;
+    private Method methode;
+
     public ControllerMethods(String controllerName, Method methode) {
         this.controllerName = controllerName;
-        Methode = methode;
+        this.methode = methode;
     }
+
     public String getControllerName() {
         return controllerName;
     }
+
     public void setControllerName(String controllerName) {
         this.controllerName = controllerName;
     }
+
     public Method getMethode() {
-        return Methode;
-    }
-    public void setMethode(Method methode) {
-        Methode = methode;
+        return methode;
     }
 
-    public void print(){
+    public void setMethode(Method methode) {
+        this.methode = methode;
+    }
+
+    public void print() {
         System.out.println(getControllerName() + getMethode().getName());
     }
-    
 }

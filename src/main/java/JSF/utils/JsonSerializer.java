@@ -2,8 +2,16 @@ package JSF.utils;
 
 import java.lang.reflect.Array;
 import java.lang.reflect.Method;
-import java.util.*;
-public class JsonSerializer {
+import java.util.Collection;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.Map;
+import java.util.Set;
+
+public final class JsonSerializer {
+
+    private JsonSerializer() {
+    }
 
     public static String serialize(Object object) throws Exception {
         return toJson(object, Collections.newSetFromMap(new IdentityHashMap<>()));
@@ -72,8 +80,8 @@ public class JsonSerializer {
             }
             first = false;
             sb.append(quote(String.valueOf(entry.getKey())))
-              .append(":")
-              .append(toJson(entry.getValue(), visited));
+                    .append(":")
+                    .append(toJson(entry.getValue(), visited));
         }
         visited.remove(map);
         return sb.append("}").toString();

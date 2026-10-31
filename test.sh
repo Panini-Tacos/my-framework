@@ -1,4 +1,9 @@
-javac -parameters -Xlint -cp "lib/servlet-api.jar" -d test $(find . -name "*.java")
-java -cp "lib/*.jar:test" lilifw.Main
+#!/usr/bin/env bash
+set -e
 
-rm -Rf test
+rm -rf test
+mkdir -p test
+trap 'rm -rf test' EXIT
+
+javac -parameters -Xlint -cp "lib/*" -d test $(find src -name "*.java")
+java -cp "lib/*:test" JSF.Main "$@"

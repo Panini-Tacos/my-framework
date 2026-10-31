@@ -1,37 +1,47 @@
 package JSF;
 
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.util.*;
-// import java.util.List;
-// import java.util.Map;
-import jakarta.servlet.ServletException;
-import jakarta.servlet.annotation.MultipartConfig;
-import jakarta.servlet.http.*;
+import java.util.HashMap;
+import java.util.Map;
 
-// import jakarta.servlet.http.HttpServletRequest;
-// import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.ApplicationContext;
 import org.springframework.web.context.support.WebApplicationContextUtils;
 
 import JSF.annotation.Auth;
-import JSF.utils.*;
-
+import JSF.utils.ApiMethods;
+import JSF.utils.AuthSupport;
+import JSF.utils.ControllerMethods;
+import JSF.utils.DataBinder;
+import JSF.utils.JsonSerializer;
+import JSF.utils.ModelAndView;
+import JSF.utils.URLMethod;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.annotation.MultipartConfig;
+import jakarta.servlet.http.HttpServlet;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpSession;
 
 @MultipartConfig(maxFileSize = 20L * 1024 * 1024, maxRequestSize = 30L * 1024 * 1024, fileSizeThreshold = 1024 * 1024)
 public class FrontControllerServlet extends HttpServlet {
 
-    Map<URLMethod, ControllerMethods> urlToMethods;
-    Map<URLMethod, ApiMethods> urlToApiMethods = new HashMap<>();
+    private static final long serialVersionUID = 1L;
 
-    private ApplicationContext ctx;
+    private transient Map<URLMethod, ControllerMethods> urlToMethods;
+    private transient Map<URLMethod, ApiMethods> urlToApiMethods;
+    private transient ApplicationContext ctx;
     private String authSessionKey;
+    private String roleSessionKey;
 
+    @Override
     @SuppressWarnings("unchecked")
     public void init() throws ServletException {
         urlToMethods = (Map<URLMethod, ControllerMethods>) getServletContext().getAttribute("urlToMethods");
         urlToApiMethods = (Map<URLMethod, ApiMethods>) getServletContext().getAttribute("urlToApiMethods");
         authSessionKey = AuthSupport.sessionKey(getServletContext());
+        roleSessionKey = AuthSupport.roleSessionKey(getServletContext());
 
         try {
             ctx = WebApplicationContextUtils.getRequiredWebApplicationContext(getServletContext());
@@ -46,7 +56,6 @@ public class FrontControllerServlet extends HttpServlet {
         try {
             processRequest(request, response);
         } catch (Exception e) {
-
             throw new ServletException(e.getMessage(), e);
         }
     }
@@ -61,9 +70,7 @@ public class FrontControllerServlet extends HttpServlet {
         }
     }
 
-    public void processRequest(HttpServletRequest request, HttpServletResponse response)
-            throws Exception {
-
+    public void processRequest(HttpServletRequest request, HttpServletResponse response) throws Exception {
         String uri = request.getRequestURI();
         String contextPath = request.getContextPath();
         String url = uri.substring(contextPath.length());
@@ -81,32 +88,31 @@ public class FrontControllerServlet extends HttpServlet {
             request.getParts();
         }
 
-        ApiMethods foncApideURL = urlToApiMethods.get(new URLMethod(url, request.getMethod()));
-        if (foncApideURL != null) {
-            Method methodeApi = foncApideURL.getMethode();
-            if (!estAutorise(methodeApi, request)) {
-                response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+        // --- API ---
+
+        ApiMethods apiMethods = urlToApiMethods.get(new URLMethod(url, request.getMethod()));
+        if (apiMethods != null) {
+            Method method = apiMethods.getMethode();
+            Acces acces = verifierAcces(method, request);
+            if (acces != Acces.AUTORISE) {
+                response.setStatus(acces == Acces.NON_AUTHENTIFIE
+                        ? HttpServletResponse.SC_UNAUTHORIZED
+                        : HttpServletResponse.SC_FORBIDDEN);
                 response.setContentType("application/json; charset=UTF-8");
-                response.getWriter().write("{\"error\": "
-                        + JsonSerializer.serialize("Authentification requise") + "}");
+                String message = acces == Acces.NON_AUTHENTIFIE
+                        ? "Authentification requise"
+                        : "Rôle insuffisant";
+                response.getWriter().write("{\"error\": " + JsonSerializer.serialize(message) + "}");
                 return;
             }
 
             try {
-                // Chargement de la classe pour prendre en compte ApplicationContext
-                Class<?> controllerClass = Class.forName(foncApideURL.getController());
+                Class<?> controllerClass = Class.forName(apiMethods.getController());
                 Object controllerInstance = controllerClass.getDeclaredConstructor().newInstance();
+                Object[] parameters = DataBinder.bind(method, request, ctx);
+                Object result = method.invoke(controllerInstance, parameters);
 
-                // Injection des parametres : ApplicationContext, HttpServletRequest,
-                // HttpSession et binding des champs de formulaire (donnees simples
-                // ou objets).
-                Object[] parameters = JSF.utils.DataBinder.bind(methodeApi, request, ctx);
-
-                // invoker la methode API 
-                Object result = methodeApi.invoke(controllerInstance, parameters);
-
-                // verifier si le developpeur a mis true ou false dans le mode de retour JSON
-                if (foncApideURL.isToJson()) {
+                if (apiMethods.isToJson()) {
                     response.setContentType("application/json; charset=UTF-8");
                     response.getWriter().write(JsonSerializer.serialize(result));
                 } else {
@@ -114,100 +120,104 @@ public class FrontControllerServlet extends HttpServlet {
                     response.getWriter().write(String.valueOf(result));
                 }
             } catch (Exception e) {
-                
                 Throwable cause = e;
-                if (e instanceof java.lang.reflect.InvocationTargetException && e.getCause() != null) {
+                if (e instanceof InvocationTargetException && e.getCause() != null) {
                     cause = e.getCause();
                 }
                 response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
                 response.setContentType("application/json; charset=UTF-8");
                 response.getWriter().write("{\"error\": " + JsonSerializer.serialize(cause.getMessage()) + "}");
             }
-
-        } else {
-
-            // c'est ici qu'on recupere la methode dans la map qu on invokera plus tard
-            ControllerMethods foncDeURL = urlToMethods.get(new URLMethod(url, request.getMethod()));
-            if (foncDeURL == null) {
-                String prefix = url.substring(0, url.lastIndexOf('/'));
-                if (prefix.isEmpty())
-                    prefix = "/";
-
-                Map<URLMethod, ControllerMethods> matchingRoutes = new HashMap<>();
-                for (Map.Entry<URLMethod, ControllerMethods> entry : urlToMethods.entrySet()) {
-                    if (entry.getKey().getUrl().startsWith(prefix)) {
-                        matchingRoutes.put(entry.getKey(), entry.getValue());
-                    }
-                }
-
-                request.setAttribute("notFoundUrl", url);
-                request.setAttribute("matchingRoutes", matchingRoutes);
-                request.getRequestDispatcher("/route.jsp").forward(request, response);
-                return;
-            }
-
-            if (!estAutorise(foncDeURL.getMethode(), request)) {
-                request.setAttribute("authMessage",
-                        "Authentification requise pour accéder à cette action.");
-                request.setAttribute("authReturnUrl", url);
-                response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-                request.getRequestDispatcher("/auth.jsp").forward(request, response);
-                return;
-            }
-
-            Class<?> controllerClass = Class.forName(foncDeURL.getControllerName());
-            Object controllerInstance = controllerClass.getDeclaredConstructor().newInstance();
-
-            // Injection des parametres : ApplicationContext, HttpServletRequest,
-            // HttpSession et binding des champs de formulaire. Les objets (POJO)
-            // sont instancies et remplis a partir des champs du formulaire.
-            Object[] parameters = JSF.utils.DataBinder.bind(foncDeURL.getMethode(), request, ctx);
-
-            Object result = foncDeURL.getMethode().invoke(controllerInstance, parameters);
-
-            if (result instanceof ModelAndView) {
-                ModelAndView mv = (ModelAndView) result;
-                for (Map.Entry<String, Object> entry : mv.getData().entrySet()) {
-                    request.setAttribute(entry.getKey(), entry.getValue());
-                }
-                request.getRequestDispatcher("/" + mv.getView() + ".jsp").forward(request, response);
-            } else {
-                request.setAttribute("controllerName", foncDeURL.getControllerName());
-                request.setAttribute("methodName", foncDeURL.getMethode().getName());
-                request.getRequestDispatcher("/route.jsp").forward(request, response);
-            }
+            return;
         }
 
+        // --- JSP ---
+
+        ControllerMethods controllerMethods = urlToMethods.get(new URLMethod(url, request.getMethod()));
+        if (controllerMethods == null) {
+            int lastSlash = url.lastIndexOf('/');
+            String prefix = lastSlash > 0 ? url.substring(0, lastSlash) : "/";
+
+            Map<URLMethod, ControllerMethods> matchingRoutes = new HashMap<>();
+            for (Map.Entry<URLMethod, ControllerMethods> entry : urlToMethods.entrySet()) {
+                if (entry.getKey().getUrl().startsWith(prefix)) {
+                    matchingRoutes.put(entry.getKey(), entry.getValue());
+                }
+            }
+
+            request.setAttribute("notFoundUrl", url);
+            request.setAttribute("matchingRoutes", matchingRoutes);
+            request.getRequestDispatcher("/route.jsp").forward(request, response);
+            return;
+        }
+
+        Method method = controllerMethods.getMethode();
+        Acces acces = verifierAcces(method, request);
+        if (acces != Acces.AUTORISE) {
+            String message = acces == Acces.NON_AUTHENTIFIE
+                    ? "Authentification requise pour accéder à cette action."
+                    : "Rôle insuffisant pour accéder à cette action.";
+            request.setAttribute("authMessage", message);
+            request.setAttribute("authReturnUrl", url);
+            response.setStatus(acces == Acces.NON_AUTHENTIFIE
+                    ? HttpServletResponse.SC_UNAUTHORIZED
+                    : HttpServletResponse.SC_FORBIDDEN);
+            request.getRequestDispatcher("/auth.jsp").forward(request, response);
+            return;
+        }
+
+        Class<?> controllerClass = Class.forName(controllerMethods.getControllerName());
+        Object controllerInstance = controllerClass.getDeclaredConstructor().newInstance();
+        Object[] parameters = DataBinder.bind(method, request, ctx);
+        Object result = method.invoke(controllerInstance, parameters);
+
+        if (result instanceof ModelAndView) {
+            ModelAndView mv = (ModelAndView) result;
+            for (Map.Entry<String, Object> entry : mv.getData().entrySet()) {
+                request.setAttribute(entry.getKey(), entry.getValue());
+            }
+            request.getRequestDispatcher("/" + mv.getView() + ".jsp").forward(request, response);
+        } else {
+            request.setAttribute("controllerName", controllerMethods.getControllerName());
+            request.setAttribute("methodName", method.getName());
+            request.getRequestDispatcher("/route.jsp").forward(request, response);
+        }
     }
 
     public Map<URLMethod, ControllerMethods> getUrlToMethods() {
         return urlToMethods;
     }
 
-    /**
-     * Vérifie {@link Auth} sur la méthode ou sur sa classe. Une route non
-     * annotée est toujours autorisée. Une route annotée exige une session
-     * contenant l'attribut configuré par {@code authSessionKey} dans le
-     * web.xml.
-     */
-    private boolean estAutorise(Method methode, HttpServletRequest request) {
-        if (methode == null) {
-            return true;
-        }
-        boolean protegee = methode.isAnnotationPresent(Auth.class)
-                || methode.getDeclaringClass().isAnnotationPresent(Auth.class);
-        if (!protegee) {
-            return true;
-        }
-        return AuthSupport.isAuthenticated(request.getSession(false), authSessionKey);
+    // --- Accès ---
+
+    private enum Acces {
+        AUTORISE,
+        NON_AUTHENTIFIE,
+        ROLE_INSUFFISANT
     }
 
-    // public Map<String, ControllerMethods> getUrlToMethods() {
-    // return urlToMethods;
-    // }
+    private Acces verifierAcces(Method method, HttpServletRequest request) {
+        if (method == null) {
+            return Acces.AUTORISE;
+        }
 
-    // public Map<String, List<Method>> getListeMethodesAnnotes() {
-    // return listeMethodesAnnotes;
-    // }
+        Auth auth = method.getAnnotation(Auth.class);
+        if (auth == null) {
+            auth = method.getDeclaringClass().getAnnotation(Auth.class);
+        }
+        if (auth == null) {
+            return Acces.AUTORISE;
+        }
 
+        HttpSession session = request.getSession(false);
+        if (!AuthSupport.isAuthenticated(session, authSessionKey)) {
+            return Acces.NON_AUTHENTIFIE;
+        }
+
+        String[] roles = auth.role();
+        if (roles.length > 0 && !AuthSupport.hasAnyRole(session, roleSessionKey, roles)) {
+            return Acces.ROLE_INSUFFISANT;
+        }
+        return Acces.AUTORISE;
+    }
 }

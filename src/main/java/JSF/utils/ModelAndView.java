@@ -1,18 +1,12 @@
 package JSF.utils;
 
-import java.util.*;
+import java.util.HashMap;
+import java.util.Map;
 
 public class ModelAndView {
+
     private String view;
-    private Map<String, Object> data = new HashMap<>();
-
-    public String getView() {
-        return view;
-    }
-
-    public void setView(String view) {
-        this.view = view;
-    }
+    private final Map<String, Object> data = new HashMap<>();
 
     public ModelAndView() {
     }
@@ -20,6 +14,14 @@ public class ModelAndView {
     public ModelAndView(String view, Object data) {
         this.view = view;
         this.data.put("data", data);
+    }
+
+    public String getView() {
+        return view;
+    }
+
+    public void setView(String view) {
+        this.view = view;
     }
 
     public void addObject(String name, Object value) {

@@ -1,9 +1,18 @@
 package JSF.utils;
 
 import java.io.IOException;
-import java.lang.reflect.*;
-import java.math.*;
-import java.util.*;
+import java.lang.reflect.Array;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.lang.reflect.Parameter;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.util.ArrayList;
+import java.util.List;
 
 import org.springframework.context.ApplicationContext;
 
@@ -13,14 +22,13 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import jakarta.servlet.http.Part;
 
-public class DataBinder {
+public final class DataBinder {
 
     private DataBinder() {
     }
 
     public static Object[] bind(Method method, HttpServletRequest request, ApplicationContext ctx)
             throws BindingException {
-
         Parameter[] parameters = method.getParameters();
         Object[] arguments = new Object[parameters.length];
 
@@ -37,8 +45,6 @@ public class DataBinder {
                 continue;
             }
             if (HttpSession.class.equals(type)) {
-                // Cree la session si elle n'existe pas encore (comportement
-                // attendu quand le controleur demande explicitement la session).
                 arguments[i] = request.getSession(true);
                 continue;
             }
@@ -46,14 +52,12 @@ public class DataBinder {
             if (isSimpleType(type)) {
                 arguments[i] = bindSimple(parameter, type, request);
             } else if (isFileType(type)) {
-
                 arguments[i] = bindFile(parameter, type, request);
             } else if (isFileTypeCollection(type, parameter.getParameterizedType())) {
                 arguments[i] = bindFileCollection(parameter, type, request);
             } else if (type.isArray() || isListType(type)) {
                 arguments[i] = bindCollection(parameter, type, request);
             } else {
-
                 arguments[i] = bindObject(parameter, type, request);
             }
         }
@@ -61,9 +65,7 @@ public class DataBinder {
         return arguments;
     }
 
-    // ------------------------------------------------------------------
-    // Parametre simple
-    // ------------------------------------------------------------------
+    // --- Paramètre simple ---
 
     private static Object bindSimple(Parameter parameter, Class<?> type, HttpServletRequest request)
             throws BindingException {
@@ -71,7 +73,6 @@ public class DataBinder {
         String value = request.getParameter(name);
 
         if (value == null) {
-
             if (type.isPrimitive() || isRequired(parameter)) {
                 throw new BindingException("Le champ obligatoire '" + name + "' est absent de la requete.");
             }
@@ -81,9 +82,7 @@ public class DataBinder {
         return convert(value, type, name);
     }
 
-    // ------------------------------------------------------------------
-    // Parametre liste / tableau
-    // ------------------------------------------------------------------
+    // --- Collection ---
 
     private static Object bindCollection(Parameter parameter, Class<?> type, HttpServletRequest request)
             throws BindingException {
@@ -103,9 +102,7 @@ public class DataBinder {
         return convertList(values, listElementType(parameter.getParameterizedType()), name);
     }
 
-    // ------------------------------------------------------------------
-    // Parametre fichier (upload multipart)
-    // ------------------------------------------------------------------
+    // --- Upload ---
 
     private static Object bindFile(Parameter parameter, Class<?> type, HttpServletRequest request)
             throws BindingException {
@@ -164,7 +161,6 @@ public class DataBinder {
         return result;
     }
 
-
     private static Object toFileType(Class<?> type, Part part, String name) throws BindingException {
         if (Part.class.equals(type)) {
             return part;
@@ -172,7 +168,6 @@ public class DataBinder {
         if (UploadedFile.class.equals(type)) {
             UploadedFile file = new UploadedFile(part);
             try {
-                
                 file.save();
             } catch (IOException e) {
                 throw new BindingException("Impossible d'enregistrer le fichier '" + name + "' : "
@@ -209,6 +204,7 @@ public class DataBinder {
         return submittedFileName == null || submittedFileName.isEmpty();
     }
 
+    // --- Objet ---
 
     private static Object bindObject(Parameter parameter, Class<?> type, HttpServletRequest request)
             throws BindingException {
@@ -224,7 +220,6 @@ public class DataBinder {
         return instance;
     }
 
-    /** Remplit recursivement un objet a partir des champs du formulaire. */
     private static void populate(Object target, String prefix, HttpServletRequest request) throws BindingException {
         for (Field field : allFields(target.getClass())) {
             int modifiers = field.getModifiers();
@@ -241,6 +236,19 @@ public class DataBinder {
                 if (value != null) {
                     writeProperty(target, field, convert(value, fieldType, fullName));
                 }
+            } else if (isFileType(fieldType)) {
+                Part part = findPart(request, fullName);
+                if (part != null) {
+                    writeProperty(target, field, toFileType(fieldType, part, fullName));
+                }
+            } else if (isFileTypeCollection(fieldType, field.getGenericType())) {
+                Class<?> elementType = fieldType.isArray()
+                        ? fieldType.getComponentType()
+                        : listElementType(field.getGenericType());
+                List<Part> parts = findParts(request, fullName);
+                if (!parts.isEmpty()) {
+                    writeProperty(target, field, toFileTypeCollection(fieldType, elementType, parts, fullName));
+                }
             } else if (fieldType.isArray()) {
                 String[] values = request.getParameterValues(fullName);
                 if (values != null) {
@@ -251,24 +259,7 @@ public class DataBinder {
                 if (values != null) {
                     writeProperty(target, field, convertList(values, listElementType(field.getGenericType()), fullName));
                 }
-            } else if (isFileType(fieldType)) {
-                // Champ fichier : photo, piece jointe... (formulaire multipart).
-                Part part = findPart(request, fullName);
-                if (part != null) {
-                    writeProperty(target, field, toFileType(fieldType, part, fullName));
-                }
-            } else if (isFileTypeCollection(fieldType, field.getGenericType())) {
-                // Champ fichier multiple ( UploadedFile[] / List<UploadedFile> ).
-                Class<?> elementType = fieldType.isArray()
-                        ? fieldType.getComponentType()
-                        : listElementType(field.getGenericType());
-                List<Part> parts = findParts(request, fullName);
-                if (!parts.isEmpty()) {
-                    writeProperty(target, field, toFileTypeCollection(fieldType, elementType, parts, fullName));
-                }
             } else {
-                // Objet imbrique : on ne le remplit que si des champs le concernent
-                // (adresse.ville, adresse.codePostal, ...).
                 if (!hasParametersWithPrefix(request, fullName)) {
                     continue;
                 }
@@ -282,8 +273,6 @@ public class DataBinder {
         }
     }
 
-    /** Prefixe des champs d'un objet : @RequestParam("x") -> "x", sinon
-     *  auto-detection du nom du parametre, sinon binding "plat". */
     private static String objectPrefix(Parameter parameter, HttpServletRequest request) throws BindingException {
         RequestParam annotation = parameter.getAnnotation(RequestParam.class);
         if (annotation != null && !annotation.value().isEmpty()) {
@@ -295,9 +284,7 @@ public class DataBinder {
         return "";
     }
 
-    // ------------------------------------------------------------------
-    // Conversions
-    // ------------------------------------------------------------------
+    // --- Conversions ---
 
     private static Object convert(String value, Class<?> type, String name) throws BindingException {
         try {
@@ -346,7 +333,6 @@ public class DataBinder {
             throw new BindingException("Impossible de convertir la valeur '" + value + "' du champ '" + name
                     + "' vers le type " + type.getSimpleName() + ".", e);
         }
-        // Ne devrait pas arriver : le type est filtre en amont.
         throw new BindingException("Type non supporte pour le champ '" + name + "' : " + type.getName());
     }
 
@@ -372,15 +358,12 @@ public class DataBinder {
         return Enum.valueOf((Class<? extends Enum>) type, value.trim());
     }
 
-    /** Conversion booleenne tolerante (utile pour les cases a cocher HTML). */
     private static boolean parseBoolean(String value) {
         String v = value.trim().toLowerCase();
         return v.equals("true") || v.equals("on") || v.equals("yes") || v.equals("1");
     }
 
-    // ------------------------------------------------------------------
-    // Instanciation / lecture / ecriture
-    // ------------------------------------------------------------------
+    // --- Instanciation ---
 
     private static Object instantiate(Class<?> type) throws BindingException {
         try {
@@ -457,11 +440,8 @@ public class DataBinder {
         return fields;
     }
 
-    // ------------------------------------------------------------------
-    // Types / outils
-    // ------------------------------------------------------------------
+    // --- Types ---
 
-    /** Types "simples" pouvant etre convertis depuis une chaine. */
     private static boolean isSimpleType(Class<?> type) {
         return type.isPrimitive()
                 || type.isEnum()
@@ -472,7 +452,6 @@ public class DataBinder {
                 || type.equals(Character.class);
     }
 
-    /** Types texte : une valeur quelconque y est acceptee telle quelle. */
     private static boolean isTextType(Class<?> type) {
         return type.equals(String.class) || CharSequence.class.isAssignableFrom(type);
     }
@@ -481,12 +460,10 @@ public class DataBinder {
         return List.class.isAssignableFrom(type);
     }
 
-    /** Types representant un fichier televerse (upload multipart). */
     private static boolean isFileType(Class<?> type) {
         return UploadedFile.class.equals(type) || Part.class.equals(type);
     }
 
-    /** true pour UploadedFile[], List<UploadedFile>, Part[], List<Part>... */
     private static boolean isFileTypeCollection(Class<?> type, Type genericType) {
         if (type.isArray()) {
             return isFileType(type.getComponentType());
@@ -494,7 +471,6 @@ public class DataBinder {
         return isListType(type) && isFileType(listElementType(genericType));
     }
 
-    /** true si la requete est un formulaire multipart/form-data (upload). */
     private static boolean isMultipart(HttpServletRequest request) {
         String contentType = request.getContentType();
         return contentType != null && contentType.toLowerCase().startsWith("multipart/");
@@ -515,18 +491,35 @@ public class DataBinder {
     }
 
     private static boolean isWrapper(Class<?> primitive, Class<?> wrapper) {
-        if (primitive.equals(boolean.class)) return wrapper.equals(Boolean.class);
-        if (primitive.equals(byte.class)) return wrapper.equals(Byte.class);
-        if (primitive.equals(char.class)) return wrapper.equals(Character.class);
-        if (primitive.equals(short.class)) return wrapper.equals(Short.class);
-        if (primitive.equals(int.class)) return wrapper.equals(Integer.class);
-        if (primitive.equals(long.class)) return wrapper.equals(Long.class);
-        if (primitive.equals(float.class)) return wrapper.equals(Float.class);
-        if (primitive.equals(double.class)) return wrapper.equals(Double.class);
+        if (primitive.equals(boolean.class)) {
+            return wrapper.equals(Boolean.class);
+        }
+        if (primitive.equals(byte.class)) {
+            return wrapper.equals(Byte.class);
+        }
+        if (primitive.equals(char.class)) {
+            return wrapper.equals(Character.class);
+        }
+        if (primitive.equals(short.class)) {
+            return wrapper.equals(Short.class);
+        }
+        if (primitive.equals(int.class)) {
+            return wrapper.equals(Integer.class);
+        }
+        if (primitive.equals(long.class)) {
+            return wrapper.equals(Long.class);
+        }
+        if (primitive.equals(float.class)) {
+            return wrapper.equals(Float.class);
+        }
+        if (primitive.equals(double.class)) {
+            return wrapper.equals(Double.class);
+        }
         return false;
     }
 
-    /** true si au moins un champ de la requete commence par le prefixe donne. */
+    // --- Outils ---
+
     private static boolean hasParametersWithPrefix(HttpServletRequest request, String prefix) {
         if (prefix == null || prefix.isEmpty()) {
             return !request.getParameterMap().isEmpty();
@@ -537,8 +530,6 @@ public class DataBinder {
                 return true;
             }
         }
-        // En multipart, les champs de type <input type="file"> n'apparaissent
-        // pas dans les parametres : on verifie aussi le nom des "parts".
         if (isMultipart(request)) {
             try {
                 for (Part part : request.getParts()) {
@@ -547,13 +538,11 @@ public class DataBinder {
                     }
                 }
             } catch (Exception ignored) {
-                // Requete illisible : on considere qu'aucun champ ne correspond.
             }
         }
         return false;
     }
 
-    /** Nom du champ de formulaire associe a un parametre simple. */
     private static String resolveName(Parameter parameter) throws BindingException {
         RequestParam annotation = parameter.getAnnotation(RequestParam.class);
         if (annotation != null && !annotation.value().isEmpty()) {
@@ -567,7 +556,6 @@ public class DataBinder {
                 + " : nommez-le avec @RequestParam(\"nom\") ou compilez les controleurs avec -parameters.");
     }
 
-    /** false uniquement si @RequestParam(required = false). */
     private static boolean isRequired(Parameter parameter) {
         RequestParam annotation = parameter.getAnnotation(RequestParam.class);
         return annotation != null && annotation.required();
